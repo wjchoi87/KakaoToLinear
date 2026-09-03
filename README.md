@@ -215,8 +215,18 @@ cd /path/to/Sparkle/bin
 **새 버전 릴리즈 절차**
 
 ```bash
-# 1) 버전 올리기: Package.swift/Info.plist의 CPBundleShortVersionString/CFBundleVersion을 올린다.
-# 2) 서명+notarize 된 앱 빌드 (아래 "### 1" 절차)
+# 0) 자동화 스크립트 (권장) — 아래 수동 절차 전체를 한 번에 수행한다.
+SPARKLE_BIN=/tmp/bin ./scripts/release.sh 0.3.0     # 실제 릴리즈 (push + GitHub Release)
+DRY_RUN=1 SPARKLE_BIN=/tmp/bin ./scripts/release.sh 0.3.0   # 로컬 검증만 (push 생략)
+
+# Apple 계정이 있으면 정식 notarize까지:
+APP_DEVELOPER_ID="Developer ID Application: 이름 (TEAMID)" \
+APPLE_ID="you@example.com" APPLE_TEAM_ID="TEAMID" APPLE_PASSWORD="app-specific" \
+SPARKLE_BIN=/tmp/bin ./scripts/release.sh 0.3.0
+
+# 1) 수동 절차:
+#    1) 버전 올리기: Package.swift/Info.plist의 CPBundleShortVersionString/CFBundleVersion을 올린다.
+#    2) 서명+notarize 된 앱 빌드 (아래 "### 1" 절차)
 ./scripts/build-app.sh          # ad-hoc용 번들 생성은 이 스크립트로
 # Developer ID 서명 + notarize + staple (아래 1번 절차)
 
