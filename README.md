@@ -156,7 +156,7 @@ build script는 SQLCipher framework를 embed하고 app rpath를 추가한 뒤 ad
 
 ## 실행 방법 (정확한 경로)
 
-빌드는 프로젝트 루트(`/Users/wjchoi/kakao-issue-maker`)에서 실행한다.
+빌드는 프로젝트 루트(저장소를 clone한 디렉터리)에서 실행한다.
 
 ### CLI
 
