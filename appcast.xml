@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  KakaoToLinear 자동 업데이트 appcast.
+  GitHub Releases로 배포 시 아래를 채우고 루트에 커밋하면
+  Info.plist의 SUFeedURL(https://raw.githubusercontent.com/wjchoi87/KakaoToLinear/main/appcast.xml)이 읽는다.
+
+  새 릴리즈 절차:
+    1) ./scripts/build-app.sh 로 번들 생성
+    2) Developer ID 서명 + notarize + staple (README 배포 섹션 참고)
+    3) zip 생성 후 Sparkle bin/sign_update 로 ed25519 서명 추출
+    4) 아래 <item> 추가/갱신 (enclosure.url / sparkle:edSignature / length)
+    5) 커밋 후 gh release create 로 zip 업로드
+-->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>KakaoToLinear Updates</title>
+    <item>
+      <title>KakaoToLinear 0.2.0</title>
+      <sparkle:version>1</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <enclosure url="https://github.com/wjchoi87/KakaoToLinear/releases/download/v0.2.0/KakaoToLinear-0.2.0.zip"
+                 sparkle:edSignature="MCL83CeQZfPozohSwd3PO2C6m47NxW+xUa3ZR5Pmrw4fPGsCEWJxFJaBLjxo1/1bSKDEtd93r2urHEyt1tz/Cg=="
+                 length="4221603"
+                 type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>

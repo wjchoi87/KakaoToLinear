@@ -1,0 +1,54 @@
+{
+  "rooms": [
+    {
+      "id": "room_101",
+      "title": "모바일 앱 개발방",
+      "lastMessage": "로그인 화면 수정 요청입니다",
+      "lastActivityAt": "2026-09-02T10:00:00Z",
+      "participantNames": ["기획팀"]
+    },
+    {
+      "id": "room_102",
+      "title": "쇼핑몰 유지보수",
+      "lastMessage": "주문 상세 확인 부탁드립니다",
+      "lastActivityAt": "2026-09-02T09:00:00Z",
+      "participantNames": ["고객사"]
+    },
+    {
+      "id": "room_103",
+      "title": "사내 개발팀",
+      "lastMessage": "배포 일정 공유합니다",
+      "lastActivityAt": "2026-09-02T08:00:00Z",
+      "participantNames": ["개발팀"]
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_1001",
+      "roomId": "room_101",
+      "senderName": "기획팀",
+      "timestamp": "2026-09-02T09:58:00Z",
+      "type": "text",
+      "text": "로그인 화면 버튼을 아래로 내려주세요",
+      "attachments": []
+    },
+    {
+      "id": "msg_1002",
+      "roomId": "room_101",
+      "senderName": "기획팀",
+      "timestamp": "2026-09-02T09:59:00Z",
+      "type": "text",
+      "text": "PC 화면은 그대로 유지합니다",
+      "attachments": []
+    },
+    {
+      "id": "msg_1003",
+      "roomId": "room_101",
+      "senderName": "개발팀",
+      "timestamp": "2026-09-02T10:00:00Z",
+      "type": "text",
+      "text": "확인했습니다",
+      "attachments": []
+    }
+  ]
+}

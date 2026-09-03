@@ -1,0 +1,46 @@
+# Build outputs
+.build/
+dist/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+
+# 사용자 데이터/로컬 산출물 (KakaoTalk 원문, 설정, 로그 — 민감)
+# 주의: 소문자 sources/ 규칙은 macOS case-insensitive 파일시스템에서
+# 코드 소스 폴더 Sources/ 까지 잡아먹으므로 사용하지 않는다.
+.kakao-linear/
+drafts/
+evidence/
+cache/
+logs/
+auth.json
+*.db
+*.db-shm
+*.db-wal
+room-mappings.json
+room-favorites.json
+config.json
+
+# 로컬 AI/E2E 테스트 데이터
+test-output/
+*.log
+
+# 시크릿/키 (민감 — 절대 커밋 금지)
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.cer
+!.github/**/*.pem
+
+# Sparkle 개인키는 Keychain에 저장되지만, 실수로 파일로 내려받은 경우 방어
+dsa_priv.pem
+ed25519_priv.pem
+sparkle_private*
+
+# macOS
+.DS_Store
+*.swp

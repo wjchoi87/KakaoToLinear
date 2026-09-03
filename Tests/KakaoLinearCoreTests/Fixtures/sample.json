@@ -1,0 +1,49 @@
+{
+  "rooms": [
+    {
+      "id": "room_123",
+      "title": "A업체 개발방",
+      "lastMessage": "PC는 기존 상태 그대로 두시면 됩니다",
+      "lastActivityAt": "2026-09-02T01:33:00Z",
+      "participantNames": ["김과장"]
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_101",
+      "roomId": "room_123",
+      "senderId": "600",
+      "senderName": "김과장",
+      "timestamp": "2026-09-02T01:32:00Z",
+      "type": "text",
+      "text": "주문 상세 모바일 화면 버튼 아래로 내려주세요",
+      "attachments": []
+    },
+    {
+      "id": "msg_102",
+      "roomId": "room_123",
+      "senderId": "600",
+      "senderName": "김과장",
+      "timestamp": "2026-09-02T01:32:10Z",
+      "type": "image",
+      "attachments": [
+        {
+          "id": "att_102_0",
+          "messageId": "msg_102",
+          "kind": "image",
+          "fullAvailable": false
+        }
+      ]
+    },
+    {
+      "id": "msg_103",
+      "roomId": "room_123",
+      "senderId": "600",
+      "senderName": "김과장",
+      "timestamp": "2026-09-02T01:33:00Z",
+      "type": "text",
+      "text": "PC는 기존 상태 그대로 두시면 됩니다",
+      "attachments": []
+    }
+  ]
+}

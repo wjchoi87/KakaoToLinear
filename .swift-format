@@ -1,0 +1,6 @@
+{
+  "rules": {
+    "NoBlockComments": false
+  },
+  "version": 1
+}
