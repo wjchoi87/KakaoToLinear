@@ -221,31 +221,31 @@ cd /path/to/Sparkle/bin
 # Developer ID 서명 + notarize + staple (아래 1번 절차)
 
 # 3) zip 만들고 서명 + appcast 갱신 (Sparkle 공식 툴)
-./bin/sign_update dist/KakaoToLinear-1.1.0.zip
+./bin/sign_update dist/KakaoToLinear-0.2.0.zip
 #      ↑ 이 출력(ed25519 서명)을 appcast.xml의 <sparkle:edSignature>에 넣는다.
 
-# 4) appcast.xml 갱신 예시
+# 4) appcast.xml 갱신 예시 (실제 버전으로 작성)
 cat > appcast.xml <<'XML'
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>KakaoToLinear Updates</title>
     <item>
-      <title>KakaoToLinear 1.1.0</title>
-      <sparkle:version>1.1.0</sparkle:version>
-      <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
-      <enclosure url="https://github.com/wjchoi87/KakaoToLinear/releases/download/v1.1.0/KakaoToLinear-1.1.0.zip"
+      <title>KakaoToLinear 0.2.0</title>
+      <sparkle:version>1</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <enclosure url="https://github.com/wjchoi87/KakaoToLinear/releases/download/v0.2.0/KakaoToLinear-0.2.0.zip"
                  sparkle:edSignature="<sign_update 출력>"
                  length="<zip 바이트 크기>"
                  type="application/octet-stream"/>
-      <sparkle:releaseNotesLink>https://github.com/wjchoi87/KakaoToLinear/releases/tag/v1.1.0</sparkle:releaseNotesLink>
+      <sparkle:releaseNotesLink>https://github.com/wjchoi87/KakaoToLinear/releases/tag/v0.2.0</sparkle:releaseNotesLink>
     </item>
   </channel>
 </rss>
 XML
 
 # 5) GitHub에 커밋(appcast.xml) 후 릴리즈 생성
-gh release create v1.1.0 dist/KakaoToLinear-1.1.0.zip --title "KakaoToLinear 1.1.0" --notes "..."
+gh release create v0.2.0 dist/KakaoToLinear-0.2.0.zip --title "KakaoToLinear 0.2.0" --notes "..."
 ```
 
 - `appcast.xml`은 `SUFeedURL`과 같은 원격 주소로 서빙해야 앱이 읽는다 (raw.githubusercontent.com 또는 GitHub Pages).
