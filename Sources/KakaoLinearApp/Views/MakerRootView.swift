@@ -10,6 +10,9 @@ struct MakerRootView: View {
       ProgressHeader(step: state.step, showingSettings: $state.showingSettings)
       if let doctor = state.doctor, !doctor.fullDiskAccess || !doctor.accessibility {
         PermissionBanner(report: doctor) {
+          // "권한 확인"을 누르면 먼저 권한 상태를 즉시 재확인해 배너를 갱신하고,
+          // 여전히 권한이 없으면 설정(System Settings) 창을 연다.
+          Task { await state.refreshDoctor() }
           state.showingSettings = true
         }
       }
@@ -40,6 +43,18 @@ struct MakerRootView: View {
     }
     .task {
       if state.rooms.isEmpty { await state.start() }
+    }
+    .task {
+      // 권한이 부족한 동안 주기적으로 재확인한다.
+      // 시스템 설정에서 권한을 허용하고 앱으로 돌아왔을 때도
+      // (활성화 이벤트가 없어도) 배너가 곧 사라지도록 폴링한다.
+      while state.doctor == nil || !state.doctor!.fullDiskAccess || !state.doctor!.accessibility {
+        try? await Task.sleep(nanoseconds: 10_000_000_000)  // 10초
+        guard let doctor = state.doctor,
+          !doctor.fullDiskAccess || !doctor.accessibility
+        else { break }
+        await state.refreshDoctor()
+      }
     }
     .sheet(isPresented: $state.showingSource) {
       SourceSheet(source: state.source)

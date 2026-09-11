@@ -140,6 +140,11 @@ struct SettingsView: View {
               .foregroundStyle(.secondary)
           }
         }
+        // Sparkle은 Developer ID 서명된 앱에서만 업데이트를 확인/설치할 수 있다.
+        // (ad-hoc 서명 배포에서는 버튼이 동작해도 업데이트를 받아들이지 않는다)
+        Text("자동 업데이트는 Developer ID로 서명된 버전에서 동작합니다. (현재 빌드는 ad-hoc 서명)")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
       if let message { Text(message).foregroundStyle(.secondary) }
       HStack {
