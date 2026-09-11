@@ -185,21 +185,29 @@ struct SettingsView: View {
   }
 
   // 프로젝트의 docs/AGENTS.md 내용을 기본 사전지침으로 사용한다.
-  // 소스 파일이 Sources/KakaoLinearApp/Views/ 아래 있으므로 그 상위 3단계가 프로젝트 루트다.
+  // 배포 앱은 번들 Resources/documents/AGENTS.md를, 개발 환경은 프로젝트 루트 docs/AGENTS.md를 읽는다.
   private func defaultAgentsMd() -> String {
-    // 1st: 소스 경로 기반 (빌드 전 개발 환경)
     var candidates: [URL] = []
+    // 1st: 배포 번들 리소스 (build-app.sh가 docs/AGENTS.md를 복사해 넣는다)
+    if let bundled = Bundle.main.url(
+      forResource: "AGENTS", withExtension: "md", subdirectory: "documents")
+    {
+      candidates.append(bundled)
+    }
+    // 2nd: 소스 경로 기반 (개발 환경)
+    // SettingsView.swift → Views → KakaoLinearApp → Sources → 프로젝트 루트 (상위 4단계)
     let sourceBased = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()  // Views
       .deletingLastPathComponent()  // KakaoLinearApp
       .deletingLastPathComponent()  // Sources
+      .deletingLastPathComponent()  // 프로젝트 루트
       .appending(path: "docs/AGENTS.md")
     candidates.append(sourceBased)
-    // 2nd: 실행 파일이 있는 .build/debug 디렉토리 기준으로 상위 탐색
+    // 3rd: 실행 디렉토리 기준
     if let cwd = ProcessInfo.processInfo.environment["PWD"] {
       candidates.append(URL(fileURLWithPath: "\(cwd)/docs/AGENTS.md"))
     }
-    // 3rd: 홈/Application Support 위치에 사용자가 직접 넣은 경우
+    // 4th: 홈 디렉토리에 사용자가 직접 넣은 경우
     candidates.append(
       FileManager.default.homeDirectoryForCurrentUser
         .appending(path: "docs/AGENTS.md")

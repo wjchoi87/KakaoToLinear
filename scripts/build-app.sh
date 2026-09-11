@@ -27,9 +27,13 @@ trap cleanup_staging EXIT
 cd "$project_dir"
 swift build -c release --product KakaoLinearApp
 
-mkdir -p "$contents_dir/MacOS" "$contents_dir/Frameworks"
+mkdir -p "$contents_dir/MacOS" "$contents_dir/Frameworks" "$contents_dir/Resources/documents"
 cp "$project_dir/.build/release/KakaoLinearApp" "$contents_dir/MacOS/KakaoToLinearApp"
 cp "$project_dir/Resources/KakaoLinearApp-Info.plist" "$contents_dir/Info.plist"
+# 기본 AI 사전지침: 설정 창의 AGENTS.md 기본값으로 쓰인다.
+if [[ -f "$project_dir/docs/AGENTS.md" ]]; then
+  cp "$project_dir/docs/AGENTS.md" "$contents_dir/Resources/documents/AGENTS.md"
+fi
 
 framework_path=$(find "$project_dir/.build" -path '*/release/SQLCipher.framework' -type d -print -quit)
 if [[ -n "$framework_path" ]]; then
