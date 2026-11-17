@@ -4,9 +4,15 @@ import Foundation
 /// 운영 로그에는 원본 요청 내용(메시지/사진 등)이 포함되지 않고, 디버깅에 필요한 최소 진단 정보만 기록한다.
 struct AIErrorLogger: Sendable {
   private let paths: AppSupportPaths
+  private let file: URL
 
-  init(paths: AppSupportPaths = AppSupportPaths()) {
+  /// `file`을 바꾸면 같은 append 규칙으로 다른 로그 파일(예: attachment-errors.log)에 쓴다.
+  init(
+    paths: AppSupportPaths = AppSupportPaths(),
+    file: KeyPath<AppSupportPaths, URL> = \.aiErrorLog
+  ) {
     self.paths = paths
+    self.file = paths[keyPath: file]
   }
 
   /// raw 응답과 디코딩 오류를 `logs/ai-errors.log`에 append로 남긴다.
@@ -34,19 +40,21 @@ struct AIErrorLogger: Sendable {
       try FileManager.default.createDirectory(
         at: paths.logs, withIntermediateDirectories: true)
       // 파일이 없으면 먼저 생성한다(forWritingTo는 존재하지 않는 파일을 열지 못함).
-      if !FileManager.default.fileExists(atPath: paths.aiErrorLog.path) {
-        FileManager.default.createFile(atPath: paths.aiErrorLog.path, contents: Data())
+      if !FileManager.default.fileExists(atPath: file.path) {
+        FileManager.default.createFile(atPath: file.path, contents: Data())
       }
       try FileManager.default.setAttributes(
-        [.posixPermissions: 0o600], ofItemAtPath: paths.aiErrorLog.path)
-      let handle = try FileHandle(forWritingTo: paths.aiErrorLog)
+        [.posixPermissions: 0o600], ofItemAtPath: file.path)
+      let handle = try FileHandle(forWritingTo: file)
       defer { try? handle.close() }
       try handle.seekToEnd()
       handle.write(Data(text.utf8))
     } catch {
       // 파일을 만들 수 없거나 열지 못한 경우 로그 파일이 없다는 stderr 한 줄만 남긴다.
       FileHandle.standardError.write(
-        Data("[kakao-linear] ai-errors.log를 쓸 수 없습니다: \(error.localizedDescription)\n".utf8))
+        Data(
+          "[kakao-linear] \(file.lastPathComponent)를 쓸 수 없습니다: \(error.localizedDescription)\n"
+            .utf8))
     }
   }
 

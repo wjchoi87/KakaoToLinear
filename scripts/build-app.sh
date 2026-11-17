@@ -31,11 +31,11 @@ mkdir -p "$contents_dir/MacOS" "$contents_dir/Frameworks" "$contents_dir/Resourc
 cp "$project_dir/.build/release/KakaoLinearApp" "$contents_dir/MacOS/KakaoToLinearApp"
 cp "$project_dir/Resources/KakaoLinearApp-Info.plist" "$contents_dir/Info.plist"
 # 기본 AI 사전지침: 설정 창의 AGENTS.md 기본값으로 쓰인다.
-if [[ -f "$project_dir/docs/AGENTS.md" ]]; then
-  cp "$project_dir/docs/AGENTS.md" "$contents_dir/Resources/documents/AGENTS.md"
+if [[ -f "$project_dir/docs/ISSUE_GUIDELINES.md" ]]; then
+  cp "$project_dir/docs/ISSUE_GUIDELINES.md" "$contents_dir/Resources/documents/ISSUE_GUIDELINES.md"
 fi
 
-framework_path=$(find "$project_dir/.build" -path '*/release/SQLCipher.framework' -type d -print -quit)
+framework_path=$(find -L "$project_dir/.build" -path '*/release/SQLCipher.framework' -type d -print -quit)
 if [[ -n "$framework_path" ]]; then
   cp -R "$framework_path" "$contents_dir/Frameworks/SQLCipher.framework"
   chmod -R u+w "$contents_dir/Frameworks/SQLCipher.framework"
@@ -43,12 +43,18 @@ if [[ -n "$framework_path" ]]; then
 fi
 
 # Sparkle 자동 업데이트 프레임워크를 번들에 포함한다 (SPM 빌드 산출물에서).
-sparkle_framework=$(find "$project_dir/.build" -path '*/release/Sparkle.framework' -type d -print -quit 2>/dev/null)
+sparkle_framework=$(find -L "$project_dir/.build" -path '*/release/Sparkle.framework' -type d -print -quit 2>/dev/null)
 if [[ -n "$sparkle_framework" ]]; then
   cp -R "$sparkle_framework" "$contents_dir/Frameworks/Sparkle.framework"
   chmod -R u+w "$contents_dir/Frameworks/Sparkle.framework"
   codesign --force --sign - "$contents_dir/Frameworks/Sparkle.framework"
 fi
+
+# 확장·스크립트가 쓰는 CLI도 앱 번들에 같이 넣는다 (Contents/MacOS/kakao-linear).
+swift build -c release --product kakao-linear
+cp "$project_dir/.build/release/kakao-linear" "$contents_dir/MacOS/kakao-linear"
+chmod 755 "$contents_dir/MacOS/kakao-linear"
+install_name_tool -add_rpath '@executable_path/../Frameworks' "$contents_dir/MacOS/kakao-linear"
 
 chmod 755 "$contents_dir/MacOS/KakaoToLinearApp"
 install_name_tool -add_rpath '@executable_path/../Frameworks' "$contents_dir/MacOS/KakaoToLinearApp"

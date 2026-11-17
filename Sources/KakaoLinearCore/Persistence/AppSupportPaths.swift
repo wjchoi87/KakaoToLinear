@@ -49,6 +49,7 @@ public struct AppSupportPaths: Sendable {
   public var operations: URL { root.appending(path: "operations", directoryHint: .isDirectory) }
   public var logs: URL { root.appending(path: "logs", directoryHint: .isDirectory) }
   public var aiErrorLog: URL { logs.appending(path: "ai-errors.log") }
+  public var attachmentErrorLog: URL { logs.appending(path: "attachment-errors.log") }
 
   public func ensureDirectories() throws {
     for directory in [

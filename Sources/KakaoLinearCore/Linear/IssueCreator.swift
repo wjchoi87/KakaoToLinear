@@ -91,3 +91,29 @@ public struct IssueCreator: Sendable {
     return result
   }
 }
+
+/// Linear 클라이언트 없이 초안을 이슈 본문으로 렌더링한다 (`issue render`).
+public struct RenderedIssue: Codable, Equatable, Sendable {
+  public let draftId: String
+  public let title: String
+  public let description: String
+  public let attachmentNames: [String]
+}
+
+public struct IssueRenderer: Sendable {
+  private let artifacts: ArtifactStore
+
+  public init(artifacts: ArtifactStore) { self.artifacts = artifacts }
+
+  public func render(draftId: String) async throws -> RenderedIssue {
+    let draft = try await artifacts.loadDraft(draftId)
+    let source = try await artifacts.loadSource(draft.sourceId)
+    return RenderedIssue(
+      draftId: draft.id,
+      title: draft.title,
+      description: LinearDescriptionBuilder().build(draft: draft, source: source),
+      attachmentNames: source.resolvedAttachments.map {
+        $0.attachment.originalName ?? $0.fileURL.lastPathComponent
+      })
+  }
+}

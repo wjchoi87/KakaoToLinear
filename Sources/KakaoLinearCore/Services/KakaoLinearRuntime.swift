@@ -17,8 +17,20 @@ public struct KakaoLinearRuntime: Sendable {
     secrets = KeychainSecretStore()
   }
 
-  public func aiProvider() async throws -> any AIProvider {
-    let config = try await configuration.load()
+  /// provider/model을 지정하면 저장된 설정은 건드리지 않고 이번 호출에만 덮어쓴다.
+  public func aiProvider(
+    provider override: AIProviderKind? = nil, model: String? = nil
+  ) async throws -> any AIProvider {
+    var config = try await configuration.load()
+    if let override {
+      config.ai.provider = override
+      config.ai.model = model ?? override.suggestedModel
+      if !override.suggestedBaseURL.isEmpty { config.ai.baseURL = override.suggestedBaseURL }
+      config.ai.visionModel = nil
+    } else if let model {
+      config.ai.model = model
+      config.ai.visionModel = nil
+    }
     switch config.ai.provider {
     case .codexSubscription:
       return CodexCLIProvider(commandPath: config.ai.commandPath, model: config.ai.model)

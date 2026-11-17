@@ -7,15 +7,37 @@ struct KakaoLinearCommand {
   private static let runtime = KakaoLinearRuntime()
 
   static func main() async {
+    let wantsJSON = CommandLine.arguments.contains("--json")
     do {
       try await run(arguments: Array(CommandLine.arguments.dropFirst()))
     } catch let error as KakaoLinearError {
-      FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+      writeError(error.localizedDescription, code: error.code, exitCode: error.exitCode, json: wantsJSON)
       exit(error.exitCode)
     } catch {
-      FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+      writeError(error.localizedDescription, code: "unknown", exitCode: 1, json: wantsJSON)
       exit(1)
     }
+  }
+
+  /*
+   변경 전 정책 - 오류는 항상 사람이 읽는 문장만 stderr로 나갔다.
+   변경 후 정책 - `--json`이면 {"schemaVersion":1,"error":{"code","exitCode","message"}}를 stderr로 내보낸다. 문장 출력은 그대로다.
+   변경 이유 - 자동화(Muxy 확장 등)가 오류 문구를 파싱하지 않고 code로 분기하게 하기 위해서다.
+   영향 범위 - `--json`을 준 모든 command의 오류 출력.
+   */
+  private static func writeError(_ message: String, code: String, exitCode: Int32, json: Bool) {
+    if json {
+      let payload: [String: Any] = [
+        "schemaVersion": 1,
+        "error": ["code": code, "exitCode": Int(exitCode), "message": message],
+      ]
+      if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) {
+        FileHandle.standardError.write(data)
+        FileHandle.standardError.write(Data("\n".utf8))
+        return
+      }
+    }
+    FileHandle.standardError.write(Data("\(message)\n".utf8))
   }
 
   private static func run(arguments: [String]) async throws {
@@ -36,7 +58,7 @@ struct KakaoLinearCommand {
     case "auth": try await runAuth(arguments: rest)
     case "issue": try await runIssue(arguments: rest)
     case "help", "--help", "-h": printHelp()
-    case "version", "--version": print("kakao-linear 0.2.0")
+    case "version", "--version": print("kakao-linear 0.4.0")
     default: throw KakaoLinearError.invalidInput("알 수 없는 command입니다: \(command)")
     }
   }
@@ -156,15 +178,43 @@ struct KakaoLinearCommand {
         "사용법: kakao-linear attachment get --id <id> --output <dir>")
     }
     let options = try Options(Array(arguments.dropFirst()))
-    let resolved = try await makeAdapter(options: options).resolveAttachment(
-      id: try options.required("--id"),
-      outputDirectory: URL(fileURLWithPath: try options.required("--output"), isDirectory: true)
-    )
+    let adapter = try makeAdapter(options: options)
+    let output = URL(fileURLWithPath: try options.required("--output"), isDirectory: true)
+    let ids = options.values("--id")
+    if ids.count > 1 {
+      // 여러 개를 한 번에: 하나가 실패해도 나머지를 계속 받고 실패는 failures에 담는다.
+      var resolved: [ResolvedAttachment] = []
+      var failures: [AttachmentBatchFailure] = []
+      for id in ids {
+        do {
+          resolved.append(
+            try await adapter.resolveAttachment(
+              id: id, outputDirectory: output.appending(path: id, directoryHint: .isDirectory)))
+        } catch {
+          failures.append(AttachmentBatchFailure(id: id, message: error.localizedDescription))
+        }
+      }
+      if options.flag("--json") {
+        try printJSON(APIEnvelope(data: AttachmentBatchResult(resolved: resolved, failures: failures)))
+      } else {
+        resolved.forEach { print($0.fileURL.path) }
+        failures.forEach { FileHandle.standardError.write(Data("\($0.id)\t\($0.message)\n".utf8)) }
+      }
+      return
+    }
+    let resolved = try await adapter.resolveAttachment(
+      id: try options.required("--id"), outputDirectory: output)
     if options.flag("--json") {
       try printJSON(APIEnvelope(data: resolved))
     } else {
       print(resolved.fileURL.path)
     }
+  }
+
+  private struct AttachmentBatchFailure: Codable { let id: String; let message: String }
+  private struct AttachmentBatchResult: Codable {
+    let resolved: [ResolvedAttachment]
+    let failures: [AttachmentBatchFailure]
   }
 
   private static func runSource(arguments: [String]) async throws {
@@ -197,7 +247,7 @@ struct KakaoLinearCommand {
     let options = try Options(arguments)
     let sourceId = try options.required("--source")
     let config = try await runtime.configuration.load()
-    let provider = try await runtime.aiProvider()
+    let provider = try await aiProvider(options)
     let composer = IssueComposer(provider: provider, store: runtime.artifacts)
     let analysis = try await composer.analyze(
       sourceId: sourceId,
@@ -211,18 +261,34 @@ struct KakaoLinearCommand {
     }
   }
 
+  /*
+   변경 전 정책 - 덧붙일 말을 반영하려면 compose 뒤에 revise를 한 번 더 불러야 해서 AI 호출이 늘었다.
+   변경 후 정책 - `compose --instruction <text>`는 PASS 1 evidence는 지침 없이(캐시 재사용) 만들고, 이슈 합성 단계에만 추가 지침을 넣는다.
+   변경 이유 - 호출 한 번으로 사용자의 추가 지침을 반영하면서 evidence 캐시가 지침에 오염되지 않게 하기 위해서다.
+   영향 범위 - compose command. `--instruction`이 없으면 기존과 동일하다.
+   */
   private static func runCompose(arguments: [String]) async throws {
     let options = try Options(arguments)
-    let provider = try await runtime.aiProvider()
+    let provider = try await aiProvider(options)
     let config = try await runtime.configuration.load()
-    let evidenceArg = options.value("--evidence")
+    let composer = IssueComposer(provider: provider, store: runtime.artifacts)
+    let sourceId = try options.required("--source")
     var evidence: EvidenceAnalysis?
-    if let id = evidenceArg { evidence = try await runtime.artifacts.loadEvidence(id) }
-    let draft = try await IssueComposer(provider: provider, store: runtime.artifacts).compose(
-      sourceId: try options.required("--source"),
-      agentsInstructions: config.linear.agentsMd,
-      evidence: evidence
-    )
+    if let id = options.value("--evidence") { evidence = try await runtime.artifacts.loadEvidence(id) }
+    var instructions = config.linear.agentsMd
+    if let extra = options.value("--instruction")?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !extra.isEmpty
+    {
+      if evidence == nil {
+        evidence = try await composer.analyze(
+          sourceId: sourceId, agentsInstructions: config.linear.agentsMd)
+      }
+      let merged = [config.linear.agentsMd, "## 이번 이슈에 대한 사용자 추가 지침\n\(extra)"]
+        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+      instructions = merged
+    }
+    let draft = try await composer.compose(
+      sourceId: sourceId, agentsInstructions: instructions, evidence: evidence)
     if options.flag("--json") { try printJSON(APIEnvelope(data: draft)) } else { printDraft(draft) }
   }
 
@@ -234,7 +300,7 @@ struct KakaoLinearCommand {
     } else {
       instruction = try options.required("--instruction")
     }
-    let provider = try await runtime.aiProvider()
+    let provider = try await aiProvider(options)
     let config = try await runtime.configuration.load()
     let evidenceArg = options.value("--evidence")
     var evidence: EvidenceAnalysis?
@@ -393,6 +459,12 @@ struct KakaoLinearCommand {
     }
   }
 
+  /// `--provider`/`--model`을 주면 저장된 AI 설정 대신 이번 호출에만 그 값으로 실행한다.
+  private static func aiProvider(_ options: Options) async throws -> any AIProvider {
+    let kind = try options.value("--provider").map(providerKind)
+    return try await runtime.aiProvider(provider: kind, model: options.value("--model"))
+  }
+
   private static func providerKind(_ value: String) throws -> AIProviderKind {
     guard let provider = AIProviderKind(rawValue: value) else {
       throw KakaoLinearError.invalidInput(
@@ -404,7 +476,7 @@ struct KakaoLinearCommand {
 
   private static func runIssue(arguments: [String]) async throws {
     guard let action = arguments.first else {
-      throw KakaoLinearError.invalidInput("사용법: kakao-linear issue <prepare|create>")
+      throw KakaoLinearError.invalidInput("사용법: kakao-linear issue <prepare|render|create>")
     }
     let options = try Options(Array(arguments.dropFirst()))
     switch action {
@@ -428,13 +500,18 @@ struct KakaoLinearCommand {
         ))
       let config = try await runtime.configuration.load()
       let draft = try await IssueComposer(
-        provider: runtime.aiProvider(),
+        provider: aiProvider(options),
         store: runtime.artifacts
       ).compose(
         sourceId: source.id,
         agentsInstructions: config.linear.agentsMd
       )
       try printJSON(APIEnvelope(data: draft))
+    case "render":
+      // Linear 없이 초안을 이슈 본문(markdown)으로 렌더링한다. GitHub 등 다른 대상에 붙여 넣을 때 쓴다.
+      let rendered = try await IssueRenderer(artifacts: runtime.artifacts).render(
+        draftId: try options.required("--draft"))
+      if options.flag("--json") { try printJSON(APIEnvelope(data: rendered)) } else { print(rendered.description) }
     case "create":
       let draftId = try options.required("--draft")
       if options.value("--defaults") == "room" {
@@ -560,7 +637,7 @@ struct KakaoLinearCommand {
       Draft:
         source create --room <id> --message <id>... | --from <id> --to <id>
         analyze --source <id> [--force-analyze] [--json]
-        compose --source <id> [--evidence <id>]
+        compose --source <id> [--evidence <id>] [--instruction <text>] [--provider <id>] [--model <id>]
         revise --draft <id> --instruction <text> | --stdin [--evidence <id>]
 
       Linear:

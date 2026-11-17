@@ -13,6 +13,19 @@ KakaoTalk 업무 요청을 사용자가 직접 선택하고, AI가 구조화한 
 
 모든 business logic은 `KakaoLinearCore`에 있고 CLI와 SwiftUI app이 같은 Core API를 호출한다.
 
+## CLI 설치 (확장·스크립트용)
+
+`kakao-linear` CLI는 앱 번들 안(`/Applications/KakaoToLinear.app/Contents/MacOS/kakao-linear`)에 들어 있고, 단독 배포본도 릴리스에 있다.
+
+```bash
+curl -L -o /tmp/kakao-linear.zip https://github.com/wjchoi87/KakaoToLinear/releases/latest/download/kakao-linear-macos-arm64.zip
+mkdir -p ~/.local/share/kakao-linear && unzip -o /tmp/kakao-linear.zip -d ~/.local/share/kakao-linear
+ln -sf ~/.local/share/kakao-linear/kakao-linear ~/.local/bin/kakao-linear
+kakao-linear --version
+```
+
+처음 한 번 `kakao-linear auth linear`, `kakao-linear auth ai`로 키를 저장한다 (앱에서 이미 설정했다면 그대로 공유된다).
+
 ## 구현 범위
 
 ### Kakao Core

@@ -9,6 +9,7 @@
 #   APPLE_ID       Apple Developer 계정 (notarize용, set하면 정식 서명/notarize 수행)
 #   APPLE_TEAM_ID  Apple Developer Team ID
 #   APPLE_PASSWORD App-specific password (Keychain에 저장 권장)
+#   NOTARY_PROFILE `xcrun notarytool store-credentials`로 저장한 Keychain profile 이름 (APPLE_* 대신 사용 가능)
 #   APP_DEVELOPER_ID  Developer ID identity ("Developer ID Application: 이름 (ABCDE12345)")
 #   SPARKLE_BIN     Sparkle bin 디렉토리 (generate_keys/sign_update 포함, 기본 자동 탐색)
 #   DRY_RUN=1       로컬(빌드/zip/서명/appcast 생성)까지만 수행, push/release 생략
@@ -62,6 +63,9 @@ echo ">>> 버전: $VERSION (빌드 #$NEW_BUILD, 이전: $CURRENT_SHORT ($CURRENT
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD" "$PLIST"
 
+# CLI의 `--version` 출력도 같은 버전으로 맞춘다
+sed -i '' -E "s/kakao-linear [0-9]+\.[0-9]+\.[0-9]+/kakao-linear $VERSION/" Sources/KakaoLinearCLI/main.swift
+
 ZIP="KakaoToLinear-$VERSION.zip"
 TAG="v$VERSION"
 
@@ -76,7 +80,7 @@ APP="dist/KakaoToLinear.app"
 SIGNED=false
 if [[ -n "${APP_DEVELOPER_ID:-}" ]]; then
   echo ">>> Developer ID 서명: $APP_DEVELOPER_ID"
-  codesign --force --deep --options runtime --sign "$APP_DEVELOPER_ID" "$APP"
+  codesign --force --deep --options runtime --timestamp --sign "$APP_DEVELOPER_ID" "$APP"
   codesign --verify --deep --strict "$APP"
   SIGNED=true
 else
@@ -86,12 +90,19 @@ else
   SIGNED=false
 fi
 
-if [[ "$SIGNED" == true && -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_PASSWORD:-}" ]]; then
+# notarytool 인증 인자: Keychain profile 우선, 없으면 APPLE_ID/TEAM/PASSWORD
+NOTARY_ARGS=()
+if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+  NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_PASSWORD:-}" ]]; then
+  NOTARY_ARGS=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_PASSWORD")
+fi
+
+if [[ "$SIGNED" == true && ${#NOTARY_ARGS[@]} -gt 0 ]]; then
   echo ">>> notarize + staple"
   ditto -c -k --keepParent "$APP" "/tmp/$ZIP"
-  xcrun notarytool submit "/tmp/$ZIP" \
-    --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_PASSWORD" --wait
-  xcrun staple "$APP"
+  xcrun notarytool submit "/tmp/$ZIP" "${NOTARY_ARGS[@]}" --wait
+  xcrun stapler staple "$APP"
   spctl -a -vv "$APP" || echo "!!! spctl 검증 실패 (알 수 없는 개발자 경고가 남음)" >&2
 else
   if [[ "$SIGNED" == true ]]; then
@@ -116,6 +127,31 @@ if [[ -z "$ED_SIG" ]]; then
   exit 1
 fi
 echo "    edSignature=$ED_SIG  length=$LENGTH"
+
+# --------------------------------------------------------------------------
+# 3b. CLI 단독 배포본 (확장 등이 내려받아 쓰는 kakao-linear)
+#     kakao-linear + SQLCipher.framework를 같은 폴더에 두면 @loader_path rpath로 찾는다.
+# --------------------------------------------------------------------------
+CLI_ZIP="kakao-linear-macos-arm64.zip"
+CLI_STAGE="$(mktemp -d "dist/.cli-stage.XXXXXX")"
+swift build -c release --product kakao-linear
+cp ".build/release/kakao-linear" "$CLI_STAGE/kakao-linear"
+SQLCIPHER_FW="$(find -L .build -path '*/release/SQLCipher.framework' -type d -print -quit)"
+if [[ -n "$SQLCIPHER_FW" ]]; then cp -R "$SQLCIPHER_FW" "$CLI_STAGE/SQLCipher.framework"; chmod -R u+w "$CLI_STAGE/SQLCipher.framework"; fi
+if [[ "$SIGNED" == true ]]; then
+  echo ">>> CLI 서명"
+  [[ -d "$CLI_STAGE/SQLCipher.framework" ]] && codesign --force --options runtime --timestamp --sign "$APP_DEVELOPER_ID" "$CLI_STAGE/SQLCipher.framework"
+  codesign --force --options runtime --timestamp --sign "$APP_DEVELOPER_ID" "$CLI_STAGE/kakao-linear"
+  codesign --verify --strict "$CLI_STAGE/kakao-linear"
+fi
+rm -f "dist/$CLI_ZIP"
+ditto -c -k --norsrc --noextattr "$CLI_STAGE" "dist/$CLI_ZIP"
+if [[ "$SIGNED" == true && ${#NOTARY_ARGS[@]} -gt 0 ]]; then
+  echo ">>> CLI notarize (zip은 staple 불가: Gatekeeper가 온라인으로 확인)"
+  xcrun notarytool submit "dist/$CLI_ZIP" "${NOTARY_ARGS[@]}" --wait
+fi
+shasum -a 256 "dist/$CLI_ZIP" | awk '{print $1}' > "dist/$CLI_ZIP.sha256"
+echo "    $CLI_ZIP sha256=$(cat "dist/$CLI_ZIP.sha256")"
 
 # --------------------------------------------------------------------------
 # 4. appcast.xml 갱신
@@ -146,16 +182,23 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
   echo ">>> DRY_RUN: git push / GitHub Release 생략"
 else
   echo ">>> git commit/push"
-  git add appcast.xml "Resources/KakaoLinearApp-Info.plist"
+  git add appcast.xml "Resources/KakaoLinearApp-Info.plist" Sources/KakaoLinearCLI/main.swift
   git commit -m "Release $VERSION (build $NEW_BUILD): bump version & update appcast" >/dev/null
   git push origin main
 
   echo ">>> GitHub Release 생성/업데이트"
   if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-    gh release upload "$TAG" "dist/$ZIP" --repo "$REPO" --clobber
+    gh release upload "$TAG" "dist/$ZIP" "dist/$CLI_ZIP" "dist/$CLI_ZIP.sha256" --repo "$REPO" --clobber
   else
-    gh release create "$TAG" "dist/$ZIP" --repo "$REPO" \
-      --title "KakaoToLinear $VERSION" --notes "KakaoToLinear $VERSION 릴리즈"
+    gh release create "$TAG" "dist/$ZIP" "dist/$CLI_ZIP" "dist/$CLI_ZIP.sha256" --repo "$REPO" \
+      --title "KakaoToLinear $VERSION" --notes "$(cat <<NOTES
+KakaoToLinear $VERSION
+
+- \`KakaoToLinear-$VERSION.zip\`: macOS 앱 (Developer ID 서명 + 공증). \`kakao-linear\` CLI가 앱 번들 안(\`Contents/MacOS/kakao-linear\`)에도 들어 있습니다.
+- \`kakao-linear-macos-arm64.zip\`: CLI 단독 배포본 (\`kakao-linear\` + \`SQLCipher.framework\`, 같은 폴더에 둘 것). sha256은 \`.sha256\` 파일 참고.
+- 최신 CLI 주소: https://github.com/$REPO/releases/latest/download/kakao-linear-macos-arm64.zip
+NOTES
+)"
   fi
 fi
 

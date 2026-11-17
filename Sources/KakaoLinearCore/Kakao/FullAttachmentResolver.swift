@@ -21,55 +21,71 @@ struct FullAttachmentResolver: Sendable {
   ) async throws -> ResolvedAttachment {
     try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
-    if attachment.kind != .file,
-      let encryptedURL = findLocalFull(
+    // 실패 메시지에 로컬/CDN 각각의 이유를 남겨 썸네일·로그에서 원인을 구분할 수 있게 한다.
+    let localNote: String
+    if attachment.kind == .file {
+      localNote = "파일은 로컬 캐시 미사용"
+    } else {
+      switch findLocalFull(
         chatId: chatId,
         logId: logId,
         messageType: messageType,
         frameIndex: frameIndex
-      )
-    {
-      let encrypted = try Data(contentsOf: encryptedURL)
-      let plaintext = try decryptPkv2(encrypted, logId: logId)
-      let sha1 = sha1Hex(plaintext)
-      try validate(hash: sha1, expected: attachment.hash)
-      let output = try outputURL(
-        directory: outputDirectory,
-        attachment: attachment,
-        bytes: plaintext,
-        fallbackStem: "\(logId)-\(frameIndex)"
-      )
-      try plaintext.write(to: output, options: .atomic)
-      return ResolvedAttachment(
-        attachment: attachment,
-        fileURL: output,
-        tier: .localFull,
-        sha1: sha1
-      )
+      ) {
+      case .found(let encryptedURL):
+        return try resolveLocal(
+          encryptedURL: encryptedURL,
+          attachment: attachment,
+          logId: logId,
+          frameIndex: frameIndex,
+          outputDirectory: outputDirectory
+        )
+      case .missing(let reason):
+        localNote = reason
+      }
+    }
+
+    func failure(_ cdnNote: String) -> KakaoLinearError {
+      .attachmentResolution("원본을 불러오지 못했습니다 — 로컬: \(localNote) · CDN: \(cdnNote)")
     }
 
     guard let remoteURL = attachment.remoteURL else {
-      throw KakaoLinearError.attachmentResolution("원본 attachment를 local cache와 CDN에서 찾지 못했습니다.")
+      throw failure("주소 없음")
     }
     guard attachment.hash?.isEmpty == false else {
-      throw KakaoLinearError.attachmentResolution("checksum이 없는 CDN attachment는 저장하지 않습니다.")
+      throw failure("checksum 없음(저장하지 않음)")
     }
     if let byteSize = attachment.byteSize, byteSize > Self.maxFetchBytes {
-      throw KakaoLinearError.attachmentResolution("attachment가 512MB 제한을 초과합니다.")
+      throw failure("512MB 제한 초과")
     }
 
     var request = URLRequest(url: remoteURL)
     request.timeoutInterval = 20
     request.setValue("KakaoTalk", forHTTPHeaderField: "User-Agent")
-    let (bytes, response) = try await URLSession.shared.data(for: request)
-    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-      throw KakaoLinearError.attachmentResolution("Kakao CDN에서 원본 attachment를 받지 못했습니다.")
+    let bytes: Data
+    let response: URLResponse
+    do {
+      (bytes, response) = try await URLSession.shared.data(for: request)
+    } catch {
+      // 썸네일이 화면에서 사라져 task가 취소된 경우는 실패로 취급하지 않는다.
+      if Task.isCancelled { throw CancellationError() }
+      throw failure("요청 실패(\(error.localizedDescription))")
+    }
+    guard let http = response as? HTTPURLResponse else {
+      throw failure("HTTP 응답 아님")
+    }
+    guard (200..<300).contains(http.statusCode) else {
+      throw failure("HTTP \(http.statusCode)")
     }
     guard Int64(bytes.count) <= Self.maxFetchBytes else {
-      throw KakaoLinearError.attachmentResolution("다운로드된 attachment가 512MB 제한을 초과합니다.")
+      throw failure("다운로드가 512MB 제한 초과")
     }
     let sha1 = sha1Hex(bytes)
-    try validate(hash: sha1, expected: attachment.hash)
+    do {
+      try validate(hash: sha1, expected: attachment.hash)
+    } catch {
+      throw failure("checksum 불일치")
+    }
     let output = try outputURL(
       directory: outputDirectory,
       attachment: attachment,
@@ -80,18 +96,49 @@ struct FullAttachmentResolver: Sendable {
     return ResolvedAttachment(attachment: attachment, fileURL: output, tier: .cdn, sha1: sha1)
   }
 
+  private func resolveLocal(
+    encryptedURL: URL,
+    attachment: KakaoAttachment,
+    logId: Int64,
+    frameIndex: Int,
+    outputDirectory: URL
+  ) throws -> ResolvedAttachment {
+    let encrypted = try Data(contentsOf: encryptedURL)
+    let plaintext = try decryptPkv2(encrypted, logId: logId)
+    let sha1 = sha1Hex(plaintext)
+    try validate(hash: sha1, expected: attachment.hash)
+    let output = try outputURL(
+      directory: outputDirectory,
+      attachment: attachment,
+      bytes: plaintext,
+      fallbackStem: "\(logId)-\(frameIndex)"
+    )
+    try plaintext.write(to: output, options: .atomic)
+    return ResolvedAttachment(
+      attachment: attachment,
+      fileURL: output,
+      tier: .localFull,
+      sha1: sha1
+    )
+  }
+
+  private enum LocalLookup {
+    case found(URL)
+    case missing(String)
+  }
+
   private func findLocalFull(
     chatId: Int64,
     logId: Int64,
     messageType: Int64,
     frameIndex: Int
-  ) -> URL? {
+  ) -> LocalLookup {
     guard
       let entries = try? FileManager.default.contentsOfDirectory(
         at: container,
         includingPropertiesForKeys: [.isDirectoryKey]
       )
-    else { return nil }
+    else { return .missing("카카오톡 컨테이너 읽기 불가(권한 확인)") }
     let accountRoots = entries.filter { url in
       let name = url.lastPathComponent
       return name.count == 40
@@ -99,6 +146,7 @@ struct FullAttachmentResolver: Sendable {
           (48...57).contains($0) || (97...102).contains($0)
         }
     }
+    guard !accountRoots.isEmpty else { return .missing("계정 캐시 폴더 없음") }
     let roomDirectory = sha1Hex(Data(String(String(chatId).reversed()).utf8))
     let identity: String
     let fileExtension: String
@@ -114,10 +162,18 @@ struct FullAttachmentResolver: Sendable {
       fileExtension = "img"
     }
     let stem = sha1Hex(Data(String(identity.reversed()).utf8))
-    return
-      accountRoots
-      .map { $0.appending(path: roomDirectory).appending(path: "\(stem).\(fileExtension)") }
-      .first { FileManager.default.fileExists(atPath: $0.path) }
+    let roomRoots = accountRoots.map { $0.appending(path: roomDirectory) }
+    guard roomRoots.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+      return .missing("채팅방 캐시 폴더 없음")
+    }
+    if let found =
+      roomRoots
+      .map({ $0.appending(path: "\(stem).\(fileExtension)") })
+      .first(where: { FileManager.default.fileExists(atPath: $0.path) })
+    {
+      return .found(found)
+    }
+    return .missing("원본 캐시 없음")
   }
 
   private func decryptPkv2(_ data: Data, logId: Int64) throws -> Data {

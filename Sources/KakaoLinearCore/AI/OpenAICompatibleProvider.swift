@@ -76,6 +76,35 @@ public struct OpenAICompatibleProvider: AIProvider {
     let notes: [String]?
     let questions: [String]?
     let sourceMessageIds: [String]?
+
+    private enum CodingKeys: String, CodingKey {
+      case title, summary, requirements, acceptanceCriteria, notes, questions, sourceMessageIds
+    }
+
+    /// 모델이 목록을 문자열 하나, 객체 배열, null 등으로 돌려줘도 문자열 목록으로 받아들인다.
+    private static func list(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [String]? {
+      if let values = try? c.decodeIfPresent([String].self, forKey: key) { return values }
+      if let text = try? c.decodeIfPresent(String.self, forKey: key) {
+        let lines = text.split(whereSeparator: \.isNewline)
+          .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "-* \t")) }.filter { !$0.isEmpty }
+        return lines.isEmpty ? nil : lines
+      }
+      if let objects = try? c.decodeIfPresent([[String: String]].self, forKey: key) {
+        return objects.map { $0["content"] ?? $0["text"] ?? $0["description"] ?? $0.values.joined(separator: " ") }
+      }
+      return nil
+    }
+
+    init(from decoder: Decoder) throws {
+      let c = try decoder.container(keyedBy: CodingKeys.self)
+      title = try c.decode(String.self, forKey: .title)
+      summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? ""
+      requirements = Self.list(c, .requirements) ?? []
+      acceptanceCriteria = Self.list(c, .acceptanceCriteria) ?? []
+      notes = Self.list(c, .notes)
+      questions = Self.list(c, .questions)
+      sourceMessageIds = Self.list(c, .sourceMessageIds)
+    }
   }
 
   // PASS 1 evidence payload는 모듈 공용 CLEvidencePayload(관대한 디코딩)를 사용한다.
@@ -343,6 +372,7 @@ public struct OpenAICompatibleProvider: AIProvider {
     } catch let error as KakaoLinearError {
       throw error
     } catch {
+      AIErrorLogger().logDecodeFailure(rawResponse: json, error: error)
       throw KakaoLinearError.aiProvider("AI가 structured draft JSON을 반환하지 않았습니다.")
     }
   }

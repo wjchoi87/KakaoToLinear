@@ -564,17 +564,31 @@ private struct ThumbnailImage: View {
   let attachment: KakaoAttachment
   let resolveAttachment: (KakaoAttachment) async throws -> ResolvedAttachment
   @State private var image: NSImage?
-  @State private var failed = false
+  // 실패 이유. 회색 아이콘만으로는 원인을 알 수 없어 icon + text로 보여준다(DESIGN: attachment unavailable).
+  @State private var failure: String?
 
   var body: some View {
     Group {
       if let image {
         Image(nsImage: image).resizable().scaledToFill()
-      } else if failed {
+      } else if let failure {
         ZStack {
           Color.secondary.opacity(0.15)
-          Image(systemName: "photo").font(.title).foregroundStyle(.secondary)
+          VStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle")
+              .font(.title3)
+              .foregroundStyle(.orange)
+            Text(failure)
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .multilineTextAlignment(.center)
+              .lineLimit(4)
+          }
+          .padding(8)
         }
+        .help(failure)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("이미지를 불러올 수 없음: \(failure)")
       } else {
         ZStack {
           Color.secondary.opacity(0.15)
@@ -585,7 +599,7 @@ private struct ThumbnailImage: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .clipped()
     .task {
-      if image == nil, !failed {
+      if image == nil, failure == nil {
         await load()
       }
     }
@@ -597,10 +611,12 @@ private struct ThumbnailImage: View {
       if let nsImage = NSImage(contentsOf: resolved.fileURL) {
         image = nsImage
       } else {
-        failed = true
+        failure = "이미지 형식을 열 수 없습니다"
       }
+    } catch is CancellationError {
+      // 스크롤로 사라졌다가 다시 보이면 재시도한다.
     } catch {
-      failed = true
+      failure = error.localizedDescription
     }
   }
 }

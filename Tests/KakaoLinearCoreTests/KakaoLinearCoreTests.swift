@@ -107,6 +107,64 @@ struct KakaoLinearCoreTests {
       try Data(contentsOf: result.fileURL) == hexData("ffd8ffe04b41544f4b2d504b56322d54455354ffd9"))
   }
 
+  @Test("resolve 실패 메시지는 로컬/CDN 이유를 각각 담는다")
+  func resolveFailureExplainsLocalAndCDN() async throws {
+    let chatId: Int64 = 42
+    let logId: Int64 = 1_234_567_890_123
+    let temporary = FileManager.default.temporaryDirectory.appending(
+      path: UUID().uuidString,
+      directoryHint: .isDirectory
+    )
+    let container = temporary.appending(path: "container", directoryHint: .isDirectory)
+    let account = container.appending(
+      path: String(repeating: "a", count: 40), directoryHint: .isDirectory)
+    let output = temporary.appending(path: "output", directoryHint: .isDirectory)
+    let attachment = KakaoAttachment(
+      id: "att_\(logId)_0",
+      messageId: "msg_\(logId)",
+      kind: .image,
+      originalName: "photo.jpg",
+      hash: "91ed9414d7eb34fe648db42be27a0b7847dc8c8e",
+      fullAvailable: true
+    )
+
+    func message() async -> String? {
+      do {
+        _ = try await FullAttachmentResolver(container: container).resolve(
+          attachment: attachment, chatId: chatId, logId: logId, messageType: 2,
+          frameIndex: 0, outputDirectory: output)
+        return nil
+      } catch {
+        return error.localizedDescription
+      }
+    }
+
+    // 컨테이너 자체가 없음(권한 거부와 같은 경로)
+    #expect(await message()?.contains("로컬: 카카오톡 컨테이너 읽기 불가") == true)
+
+    try FileManager.default.createDirectory(at: account, withIntermediateDirectories: true)
+    #expect(await message()?.contains("로컬: 채팅방 캐시 폴더 없음") == true)
+
+    let room = account.appending(
+      path: sha1Hex(Data(String(String(chatId).reversed()).utf8)),
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: room, withIntermediateDirectories: true)
+    #expect(await message() == "원본을 불러오지 못했습니다 — 로컬: 원본 캐시 없음 · CDN: 주소 없음")
+  }
+
+  @Test("attachment 실패 로그는 attachment-errors.log에 따로 쌓인다")
+  func attachmentErrorLogFile() throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "kakao-log-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let paths = AppSupportPaths(root: root)
+    AIErrorLogger(paths: paths, file: \.attachmentErrorLog).log(
+      "attachment", message: "id=att_1_0 error=test")
+    let text = String(decoding: try Data(contentsOf: paths.attachmentErrorLog), as: UTF8.self)
+    #expect(text.contains("[attachment] id=att_1_0 error=test"))
+    #expect(!FileManager.default.fileExists(atPath: paths.aiErrorLog.path))
+  }
+
   @Test("active account SHA-512에서 one-time user id를 복구한다")
   func recoversUserIdFromPreferenceHash() throws {
     let userId: Int64 = 4_242
@@ -181,5 +239,16 @@ struct KakaoLinearCoreTests {
       _ = CC_SHA512(buffer.baseAddress, CC_LONG(data.count), &digest)
     }
     return digest.map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+@Suite("Error codes")
+struct ErrorCodeTests {
+  @Test("오류는 기계가 읽는 code를 가진다 (Full Disk Access는 별도 code)")
+  func errorCodes() {
+    #expect(KakaoLinearError.permission("Full Disk Access를 허용해주세요").code == "full_disk_access")
+    #expect(KakaoLinearError.permission("키가 없습니다").code == "permission")
+    #expect(KakaoLinearError.invalidInput("x").code == "invalid_input")
+    #expect(KakaoLinearError.roomNotFound("r").code == "room_not_found")
   }
 }

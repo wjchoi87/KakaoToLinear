@@ -28,6 +28,23 @@ public enum KakaoLinearError: Error, LocalizedError, Sendable {
     }
   }
 
+  /// 기계가 읽는 오류 종류. `--json` 오류 출력의 error.code로 쓴다.
+  public var code: String {
+    switch self {
+    case .permission(let message): message.contains("Full Disk Access") ? "full_disk_access" : "permission"
+    case .kakaoNotRunning: "kakao_not_running"
+    case .roomNotFound: "room_not_found"
+    case .messageNotFound: "message_not_found"
+    case .attachmentResolution: "attachment"
+    case .aiProvider: "ai_provider"
+    case .linearAPI: "linear_api"
+    case .invalidInput: "invalid_input"
+    case .alreadyCreated: "already_created"
+    case .kakaoDatabase: "kakao_database"
+    case .internalFailure: "internal"
+    }
+  }
+
   public var errorDescription: String? {
     switch self {
     case .permission(let message),

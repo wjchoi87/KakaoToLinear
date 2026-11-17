@@ -189,13 +189,17 @@ struct SettingsView: View {
     }
   }
 
-  // 프로젝트의 docs/AGENTS.md 내용을 기본 사전지침으로 사용한다.
-  // 배포 앱은 번들 Resources/documents/AGENTS.md를, 개발 환경은 프로젝트 루트 docs/AGENTS.md를 읽는다.
+  /*
+   변경 전 정책 - docs/AGENTS.md(개발 작업 지시서)를 AI 기본 사전지침으로 읽어, 모든 이슈 초안에 개발 지시문이 섞였다.
+   변경 후 정책 - 이슈 작성 전용 지침인 docs/ISSUE_GUIDELINES.md를 기본값으로 읽는다. docs/AGENTS.md는 저장소 작업용 문서로만 둔다.
+   변경 이유 - 이슈 내용이 개발 지시문(2-pass 분석 구조 개선 요청 등)으로 오염되는 문제를 막기 위해서다.
+   영향 범위 - 설정 창의 사전지침 기본값(설정이 비어 있을 때)과 번들 리소스 복사에 적용된다.
+   */
   private func defaultAgentsMd() -> String {
     var candidates: [URL] = []
-    // 1st: 배포 번들 리소스 (build-app.sh가 docs/AGENTS.md를 복사해 넣는다)
+    // 1st: 배포 번들 리소스 (build-app.sh가 docs/ISSUE_GUIDELINES.md를 복사해 넣는다)
     if let bundled = Bundle.main.url(
-      forResource: "AGENTS", withExtension: "md", subdirectory: "documents")
+      forResource: "ISSUE_GUIDELINES", withExtension: "md", subdirectory: "documents")
     {
       candidates.append(bundled)
     }
@@ -206,16 +210,16 @@ struct SettingsView: View {
       .deletingLastPathComponent()  // KakaoLinearApp
       .deletingLastPathComponent()  // Sources
       .deletingLastPathComponent()  // 프로젝트 루트
-      .appending(path: "docs/AGENTS.md")
+      .appending(path: "docs/ISSUE_GUIDELINES.md")
     candidates.append(sourceBased)
     // 3rd: 실행 디렉토리 기준
     if let cwd = ProcessInfo.processInfo.environment["PWD"] {
-      candidates.append(URL(fileURLWithPath: "\(cwd)/docs/AGENTS.md"))
+      candidates.append(URL(fileURLWithPath: "\(cwd)/docs/ISSUE_GUIDELINES.md"))
     }
     // 4th: 홈 디렉토리에 사용자가 직접 넣은 경우
     candidates.append(
       FileManager.default.homeDirectoryForCurrentUser
-        .appending(path: "docs/AGENTS.md")
+        .appending(path: "docs/ISSUE_GUIDELINES.md")
     )
     for u in candidates {
       if let content = try? String(contentsOf: u, encoding: .utf8),

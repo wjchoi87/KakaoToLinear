@@ -112,27 +112,41 @@ public final class NativeKakaoArchiveAdapter: KakaoArchiveAdapter, @unchecked Se
 
   public func resolveAttachment(id: String, outputDirectory: URL) async throws -> ResolvedAttachment
   {
-    let parts = try KakaoIdentifiers.attachmentParts(from: id)
-    let (database, _) = try openDatabase()
-    let row = try loadMessage(logId: parts.logId, database: database)
-    let attachments = metadataParser.parse(
-      logId: row.logId,
-      messageType: row.messageType,
-      rawJSON: row.attachment
-    )
-    guard let attachment = attachments.first(where: { $0.id == id }) else {
-      throw KakaoLinearError.messageNotFound(id)
-    }
+    // 실패 원인을 logs/attachment-errors.log에 남긴다. 메시지 본문·파일명·CDN URL은 기록하지 않는다.
+    var context = "id=\(id)"
+    do {
+      let parts = try KakaoIdentifiers.attachmentParts(from: id)
+      let (database, _) = try openDatabase()
+      let row = try loadMessage(logId: parts.logId, database: database)
+      let attachments = metadataParser.parse(
+        logId: row.logId,
+        messageType: row.messageType,
+        rawJSON: row.attachment
+      )
+      guard let attachment = attachments.first(where: { $0.id == id }) else {
+        throw KakaoLinearError.messageNotFound(id)
+      }
+      context +=
+        " type=\(row.messageType) kind=\(attachment.kind.rawValue)"
+        + " cdn=\(attachment.remoteURL == nil ? "no" : "yes")"
+        + " hash=\(attachment.hash?.isEmpty == false ? "yes" : "no")"
 
-    let resolver = FullAttachmentResolver(container: authResolver.paths.container)
-    return try await resolver.resolve(
-      attachment: attachment,
-      chatId: row.chatId,
-      logId: row.logId,
-      messageType: row.messageType,
-      frameIndex: parts.index,
-      outputDirectory: outputDirectory
-    )
+      let resolver = FullAttachmentResolver(container: authResolver.paths.container)
+      return try await resolver.resolve(
+        attachment: attachment,
+        chatId: row.chatId,
+        logId: row.logId,
+        messageType: row.messageType,
+        frameIndex: parts.index,
+        outputDirectory: outputDirectory
+      )
+    } catch let cancellation as CancellationError {
+      throw cancellation
+    } catch {
+      AIErrorLogger(file: \.attachmentErrorLog).log(
+        "attachment", message: "\(context) error=\(error.localizedDescription)")
+      throw error
+    }
   }
 
   public func databaseIsReadable() -> Bool {
