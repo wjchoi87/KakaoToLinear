@@ -40,7 +40,21 @@ struct CLEvidencePayload: Codable, Sendable {
       case description  // 모델이 content 대신 description을 쓰는 경우 허용
     }
 
+    /*
+     변경 전 정책 - evidence 항목은 객체({content, sourceMessageIds, ...})만 받았고, 문자열이면 evidence 전체 decode가 실패했다.
+     변경 후 정책 - 항목이 문자열이면 그 문자열을 content로 받고 sourceMessageIds/attachmentIds는 비우며 confidence는 1로 둔다.
+     변경 이유 - schema를 강제하지 않는 provider(Alibaba 등)가 facts를 ["..."]로 보내 '정리'가 통째로 실패했다(2026-11-25 로그).
+     영향 범위 - 모든 provider의 PASS 1 evidence 항목 decode. 객체 형식 응답은 기존과 동일하다.
+     */
     init(from decoder: Decoder) throws {
+      if let text = try? decoder.singleValueContainer().decode(String.self) {
+        content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        sourceMessageIds = []
+        attachmentIds = []
+        confidence = 1.0
+        kind = nil
+        return
+      }
       let c = try decoder.container(keyedBy: CodingKeys.self)
       // content가 없으면 description 키를 fallback으로 사용한다.
       content =
@@ -77,6 +91,17 @@ struct CLEvidencePayload: Codable, Sendable {
     }
 
     init(from decoder: Decoder) throws {
+      // 항목과 같은 이유로 문자열 하나만 오면 관찰 1줄로 받는다.
+      if let text = try? decoder.singleValueContainer().decode(String.self) {
+        attachmentId = ""
+        type = "other"
+        observations = [text]
+        relatedMessageIds = []
+        relatedRequests = []
+        ambiguities = []
+        confidence = 1.0
+        return
+      }
       let c = try decoder.container(keyedBy: CodingKeys.self)
       attachmentId = (try c.decodeIfPresent(String.self, forKey: .attachmentId)) ?? ""
       type = (try c.decodeIfPresent(String.self, forKey: .type)) ?? "other"
@@ -109,6 +134,30 @@ struct CLEvidencePayload: Codable, Sendable {
   let relationships: [Item]
   let attachmentInsights: [Insight]
   let overallConfidence: Double?
+
+  private enum CodingKeys: String, CodingKey {
+    case facts, requests, constraints, conditions, exclusions, ambiguities, relationships,
+      attachmentInsights, overallConfidence
+  }
+
+  /*
+   변경 전 정책 - evidence 최상위 배열 키가 하나라도 빠지면 decode가 실패했다.
+   변경 후 정책 - 빠진 배열 키는 빈 배열로, overallConfidence가 숫자가 아니면 nil로 받는다.
+   변경 이유 - 모델이 비어 있는 분류(exclusions 등)를 생략하는 일이 잦아 정상 분석도 실패로 처리됐다.
+   영향 범위 - 모든 provider의 PASS 1 evidence decode. 키가 다 있는 응답은 기존과 동일하다.
+   */
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    facts = try c.decodeIfPresent([Item].self, forKey: .facts) ?? []
+    requests = try c.decodeIfPresent([Item].self, forKey: .requests) ?? []
+    constraints = try c.decodeIfPresent([Item].self, forKey: .constraints) ?? []
+    conditions = try c.decodeIfPresent([Item].self, forKey: .conditions) ?? []
+    exclusions = try c.decodeIfPresent([Item].self, forKey: .exclusions) ?? []
+    ambiguities = try c.decodeIfPresent([Item].self, forKey: .ambiguities) ?? []
+    relationships = try c.decodeIfPresent([Item].self, forKey: .relationships) ?? []
+    attachmentInsights = try c.decodeIfPresent([Insight].self, forKey: .attachmentInsights) ?? []
+    overallConfidence = try? c.decodeIfPresent(Double.self, forKey: .overallConfidence)
+  }
 }
 
 struct CLIProviderSupport: Sendable {

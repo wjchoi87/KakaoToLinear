@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import KakaoLinearCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -635,12 +636,15 @@ private struct AttachmentPreviewView: View {
   @State private var ocrDidRun = false
   @State private var ocrBoxes: [OCRBox] = []
   @State private var escMonitor: Any?
+  // 원본은 시트를 열 때 한 번만 읽는다. 계산 속성이면 다시 그릴 때마다·OCR 좌표 계산마다 디스크에서 다시 디코딩했다.
+  @State private var nsImage: NSImage?
 
   private static let maxScale: CGFloat = 2
   private static let minScale: CGFloat = 1
 
-  private var nsImage: NSImage? {
-    item.kind == .image ? NSImage(contentsOf: item.url) : nil
+  init(item: PreviewItem) {
+    self.item = item
+    _nsImage = State(initialValue: item.kind == .image ? NSImage(contentsOf: item.url) : nil)
   }
 
   var body: some View {
@@ -746,6 +750,8 @@ private struct AttachmentPreviewView: View {
   // Apple Vision 프레임워크로 이미지 텍스트를 인식한다(온디바이스, 네트워크 불필요).
   // silent=true면(호버 시) 시트를 띄우지 않고 text만 채운다.
   // 줌 상태(scale>1)에서는 화면에 보이는 영역을 잘라 그 위에서 다시 OCR한다.
+  // 디코딩·crop·Vision 인식은 main thread 밖에서 한다. main에서 동기로 돌리면 인식하는 동안
+  // (1800px 이미지 기준 첫 실행 약 0.9초, 이미지가 클수록 더 길다) 닫기 버튼을 포함한 UI 전체가 멈췄다.
   private func performOCR(silent: Bool = false) async {
     guard let image = nsImage else {
       ocrText = nil
@@ -755,48 +761,58 @@ private struct AttachmentPreviewView: View {
     isOCRInProgress = true
     defer { isOCRInProgress = false }
 
-    let sourcePx = CGSize(width: image.size.width, height: image.size.height)
-    var cropOrigin: CGPoint?
-    var cropPixels: CGSize?
-    let workingImage: NSImage
-    if scale > 1.01, let crop = visibleCropImage(from: image) {
-      workingImage = crop
-      cropOrigin = visibleCropOrigin()
-      cropPixels = CGSize(width: crop.size.width, height: crop.size.height)
-    } else {
-      workingImage = image
+    var cropRect: CGRect?
+    if scale > 1.01, let origin = visibleCropOrigin(), let size = visibleCropSize() {
+      cropRect = CGRect(origin: origin, size: size)
     }
-    guard let cgImage = workingImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-      return
-    }
+    let boxes = await Self.recognizeText(
+      at: item.url, cropRect: cropRect, sourcePixels: image.size)
+    let joined = boxes.map(\.text).joined(separator: "\n")
+    ocrText = joined.isEmpty ? nil : joined
+    ocrBoxes = joined.isEmpty ? [] : boxes
+    if !silent { showingOCR = true }
+  }
 
-    let request = VNRecognizeTextRequest { request, error in
-      guard error == nil else { return }
-      let observations = request.results as? [VNRecognizedTextObservation] ?? []
-      var boxes: [OCRBox] = []
-      for obs in observations {
-        guard let candidate = obs.topCandidates(1).first else { continue }
-        var rect = obs.boundingBox
+  /// 백그라운드에서 원본을 디코딩하고(줌 상태면 보이는 영역만 잘라) 텍스트 위치를 인식한다.
+  nonisolated private static func recognizeText(
+    at url: URL, cropRect: CGRect?, sourcePixels: CGSize
+  ) async -> [OCRBox] {
+    await Task.detached(priority: .userInitiated) { () -> [OCRBox] in
+      guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        let full = CGImageSourceCreateImageAtIndex(source, 0, nil)
+      else { return [] }
+      var cgImage = full
+      var cropOrigin: CGPoint?
+      var cropPixels: CGSize?
+      if let rect = cropRect, rect.minX >= 0, rect.minY >= 0,
+        rect.maxX <= CGFloat(full.width), rect.maxY <= CGFloat(full.height),
+        let cropped = full.cropping(to: rect)
+      {
+        cgImage = cropped
+        cropOrigin = rect.origin
+        cropPixels = CGSize(width: cropped.width, height: cropped.height)
+      }
+      let request = VNRecognizeTextRequest()
+      request.recognitionLevel = .accurate
+      request.usesLanguageCorrection = true
+      // 한국어/영어를 함께 인식한다(기본은 영어뿐이라 한글 텍스트가 누락될 수 있다).
+      request.recognitionLanguages = ["ko-KR", "en-US"]
+      do {
+        try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+      } catch {
+        return []
+      }
+      return (request.results ?? []).compactMap { observation in
+        guard let candidate = observation.topCandidates(1).first else { return nil }
+        var rect = observation.boundingBox
         // crop 영역에서 OCR한 경우 → 전체 이미지 Vision 좌표로 되돌린다.
         if let origin = cropOrigin, let pixels = cropPixels {
           rect = Self.mapCropBox(
-            rect, cropOrigin: origin, cropPixels: pixels, sourcePixels: sourcePx)
+            rect, cropOrigin: origin, cropPixels: pixels, sourcePixels: sourcePixels)
         }
-        boxes.append(OCRBox(text: candidate.string, normalizedRect: rect))
+        return OCRBox(text: candidate.string, normalizedRect: rect)
       }
-      let joined = boxes.map(\.text).joined(separator: "\n")
-      Task { @MainActor in
-        ocrText = joined.isEmpty ? nil : joined
-        ocrBoxes = joined.isEmpty ? [] : boxes
-        if !silent { showingOCR = true }
-      }
-    }
-    request.recognitionLevel = .accurate
-    request.usesLanguageCorrection = true
-    // 한국어/영어를 함께 인식한다(기본은 영어뿐이라 한글 텍스트가 누락될 수 있다).
-    request.recognitionLanguages = ["ko-KR", "en-US"]
-    let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-    try? handler.perform([request])
+    }.value
   }
 
   // 줌 상태에서 화면에 보이는 이미지 영역의 origin(전체 이미지 픽셀 좌표, 좌상단 원점).
@@ -849,21 +865,8 @@ private struct AttachmentPreviewView: View {
       height: max(1, (vMax - vMin) * image.size.height))
   }
 
-  // 눈에 보이는 영역을 잘라낸 해상도 이미지를 만든다.
-  private func visibleCropImage(from image: NSImage) -> NSImage? {
-    guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-      let origin = visibleCropOrigin(), let size = visibleCropSize()
-    else { return nil }
-    let rect = CGRect(origin: origin, size: size)
-    guard rect.maxX <= CGFloat(cg.width), rect.maxY <= CGFloat(cg.height), rect.minX >= 0,
-      rect.minY >= 0
-    else { return nil }
-    guard let cropped = cg.cropping(to: rect) else { return nil }
-    return NSImage(cgImage: cropped, size: NSSize(width: cropped.width, height: cropped.height))
-  }
-
   // crop의 Vision 좌표 → 전체 이미지 Vision(좌하단) 좌표로 변환.
-  private static func mapCropBox(
+  nonisolated private static func mapCropBox(
     _ box: CGRect, cropOrigin: CGPoint, cropPixels: CGSize, sourcePixels: CGSize
   ) -> CGRect {
     guard cropPixels.width > 0, cropPixels.height > 0, sourcePixels.width > 0,

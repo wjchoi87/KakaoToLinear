@@ -368,6 +368,30 @@ struct WorkflowTests {
     #expect(await failureMessage(.file)?.contains("CDN: checksum 없음(저장하지 않음)") == true)
   }
 
+  @Test("evidence 항목이 문자열이거나 분류 키가 빠져도 PASS 1을 실패로 처리하지 않는다")
+  func evidenceAcceptsStringItems() async throws {
+    // 2026-11-25 Alibaba 응답 형태: facts가 객체가 아니라 문자열이고 일부 분류 키가 없다.
+    let content = """
+      {"facts":["로그인 버튼이 안 보인다"],"requests":[{"content":"버튼 위치 수정","sourceMessageIds":["msg_101"],"attachmentIds":[],"confidence":0.9}],"attachmentInsights":["스크린샷에 빨간 박스"],"overallConfidence":0.8}
+      """
+    MockURLProtocol.handler = { request in
+      try response(url: request.url, object: ["choices": [["message": ["content": content]]]])
+    }
+    let provider = OpenAICompatibleProvider(
+      configuration: .init(baseURL: "https://mock.test/v1", model: "mock-model"),
+      apiKey: "test",
+      session: mockSession()
+    )
+    let evidence = try await provider.analyzeEvidence(
+      source: sampleSource(), agentsInstructions: nil)
+    #expect(evidence.facts.map(\.content) == ["로그인 버튼이 안 보인다"])
+    #expect(evidence.facts.first?.sourceMessageIds == [])
+    #expect(evidence.requests.first?.sourceMessageIds == ["msg_101"])
+    #expect(evidence.constraints.isEmpty)
+    #expect(evidence.exclusions.isEmpty)
+    #expect(evidence.attachmentInsights.first?.observations == ["스크린샷에 빨간 박스"])
+  }
+
   @Test("OpenCode catalog는 UNKNOWN과 paid model을 fail-closed로 제외한다")
   func openCodeFreeCatalog() async throws {
     MockURLProtocol.handler = { request in

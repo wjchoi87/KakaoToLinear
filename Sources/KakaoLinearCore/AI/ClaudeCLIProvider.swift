@@ -11,6 +11,15 @@ import Foundation
    stream-json 입력은 stream-json 출력을 강제하므로 마지막 result event의 structured_output을 읽는다.
  */
 public struct ClaudeCLIProvider: AIProvider {
+  /*
+   변경 전 정책 - claude -p 호출 1회를 180초(Codex와 같은 값)에서 끊었다.
+   변경 후 정책 - 호출 1회 제한을 600초로 둔다.
+   변경 이유 - 구독 플랜 기본 모델(Opus)은 합성 fixture 2개 메시지 compose에도 73초(Sonnet 21초)가 걸려,
+     실제 대화·이미지 분석이 정상 진행 중에 180초 제한으로 실패했다(2026-11-25 Muxy workdeck 제보·실측).
+   영향 범위 - Claude provider의 analyze/compose/revise 각 호출. 멈춘 CLI는 여전히 600초 뒤 종료된다.
+   */
+  static let promptTimeout: TimeInterval = 600
+
   private let executable: URL?
   private let model: String
   private let runner: SubprocessRunner
@@ -131,7 +140,7 @@ public struct ClaudeCLIProvider: AIProvider {
       arguments: claudeArguments(schema: schema),
       stdin: try Self.streamInput(prompt: prompt, images: images),
       currentDirectory: workspace,
-      timeout: 180
+      timeout: Self.promptTimeout
     )
     let event = Self.resultEvent(in: result.stdout)
     guard result.exitCode == 0, let event, event["is_error"] as? Bool != true else {
