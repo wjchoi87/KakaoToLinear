@@ -46,6 +46,17 @@ public struct AIProviderCatalog: Sendable {
       return configuredModel.isEmpty
         ? [AIModelInfo(id: "", name: "Codex CLI 기본 모델")]
         : [AIModelInfo(id: configuredModel, name: configuredModel)]
+    case .claudeSubscription:
+      // Claude Code CLI model alias. 빈 값은 CLI 기본 모델(구독 플랜 설정)을 따른다.
+      var models = [
+        AIModelInfo(id: "", name: "Claude CLI 기본 모델"),
+        AIModelInfo(id: "opus", name: "opus"),
+        AIModelInfo(id: "sonnet", name: "sonnet"),
+      ]
+      if !models.contains(where: { $0.id == configuredModel }) {
+        models.append(AIModelInfo(id: configuredModel, name: configuredModel))
+      }
+      return models
     case .openCodeFree:
       guard let apiKey, !apiKey.isEmpty else {
         throw KakaoLinearError.permission("OpenCode API key가 없습니다. kakao-linear auth ai를 실행해주세요.")

@@ -84,8 +84,8 @@ struct SettingsView: View {
         {
           TextField("Vision Model (선택)", text: $visionModel)
         }
-        if aiProvider != .codexSubscription {
-          LabeledContent("Credential owner", value: "macOS Keychain")
+        if !aiProvider.usesCLICredential {
+          LabeledContent("Credential owner", value: aiProvider.credentialOwner)
           SecretStatusField(
             placeholder: "API Key",
             text: $aiKey,
@@ -94,7 +94,7 @@ struct SettingsView: View {
           )
           Button("모델 새로고침") { Task { await loadModels() } }
         } else {
-          LabeledContent("Credential owner", value: "Codex CLI")
+          LabeledContent("Credential owner", value: aiProvider.credentialOwner)
           HStack {
             Text(aiProvider.setupHint).font(.callout.monospaced()).textSelection(.enabled)
             Spacer()
@@ -104,7 +104,7 @@ struct SettingsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        if aiProvider == .codexSubscription {
+        if aiProvider.usesCLICredential {
           TextField("CLI path override (선택)", text: $commandPath)
         }
       }
@@ -231,9 +231,18 @@ struct SettingsView: View {
     return ""
   }
 
+  /*
+   변경 전 정책 - CLI path override는 provider와 무관하게 입력값 그대로 저장했다.
+   변경 후 정책 - provider를 바꾸고 path를 손대지 않았으면 이전 provider의 path로 보고 비운다.
+   변경 이유 - Codex·Claude가 같은 ai.commandPath를 쓰므로, Codex path가 Claude 실행 파일로 쓰이는 것을 막는다.
+   영향 범위 - 설정 창에서 provider를 바꿔 저장할 때의 ai.commandPath. provider가 같거나 path를 직접 고치면 기존과 동일하다.
+   */
   private func save() async {
     do {
       var config = try await runtime.configuration.load()
+      if config.ai.provider != aiProvider, commandPath == (config.ai.commandPath ?? "") {
+        commandPath = ""
+      }
       config.ai.provider = aiProvider
       config.ai.baseURL = aiBaseURL
       config.ai.model = aiModel
@@ -243,7 +252,7 @@ struct SettingsView: View {
       config.linear.agentsMd = agentsMd.isEmpty ? nil : agentsMd
       config.hotkey = hotkey(for: hotkeyChoice)
       try await runtime.configuration.save(config)
-      if aiProvider != .codexSubscription, !aiKey.isEmpty {
+      if !aiProvider.usesCLICredential, !aiKey.isEmpty {
         try runtime.setAISecret(aiKey, for: aiProvider)
         aiKeySaved = true
         aiKey = ""
@@ -269,7 +278,7 @@ struct SettingsView: View {
   }
 
   private func aiKeyExists(for provider: AIProviderKind) -> Bool {
-    if provider == .codexSubscription { return true }  // Codex는 CLI가 credential을 소유
+    if provider.usesCLICredential { return true }  // Codex·Claude는 CLI가 credential을 소유
     return (try? runtime.aiSecret(for: provider)) != nil
   }
 

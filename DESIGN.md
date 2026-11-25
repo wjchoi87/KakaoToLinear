@@ -62,7 +62,7 @@ Room 선택 → Message 정리 → Draft 확정 → Linear 생성 → 결과
 - empty: icon, 원인, 해결 기준 표시
 - attachment unavailable: warning으로 표시하고 issue creation 허용
 - already created: CLI exit 60, 기존 identifier/url 안내
-- AI settings: provider → model 순서로 선택하고 Codex는 CLI owner, 나머지는 provider별 Keychain 입력을 표시
+- AI settings: provider → model 순서로 선택하고 Codex·Claude는 CLI owner, 나머지는 provider별 Keychain 입력을 표시
 
 ## Accessibility
 

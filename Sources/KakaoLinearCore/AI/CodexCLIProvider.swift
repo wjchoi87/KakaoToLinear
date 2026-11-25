@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 public struct CodexCLIProvider: AIProvider {
@@ -36,7 +35,7 @@ public struct CodexCLIProvider: AIProvider {
       source: source, agentsInstructions: agentsInstructions)
     let output = try await runPrompt(prompt: prompt, arguments: arguments, executable: executable)
     let payload = try support.decodeEvidencePayload(output)
-    let hash = try Self.sourceHash(source)
+    let hash = support.sourceHash(source)
     return support.makeEvidence(payload: payload, source: source, sourceHash: hash)
   }
 
@@ -151,7 +150,7 @@ public struct CodexCLIProvider: AIProvider {
     )
     guard result.exitCode == 0 else {
       throw KakaoLinearError.aiProvider(
-        safeFailure(prefix: "Codex CLI", stderr: result.stderr))
+        CLIProviderSupport().safeFailure(prefix: "Codex CLI", stderr: result.stderr))
     }
     guard let data = try? Data(contentsOf: outputURL(for: arguments)), !data.isEmpty else {
       throw KakaoLinearError.aiProvider("Codex CLI가 final output을 만들지 않았습니다.")
@@ -165,26 +164,5 @@ public struct CodexCLIProvider: AIProvider {
       return URL(fileURLWithPath: options[index + 1])
     }
     return URL(fileURLWithPath: options[options.count - 1])
-  }
-
-  private static func sourceHash(_ source: SourceBundle) throws -> String {
-    let ids = source.messages.map(\.id).joined(separator: "|")
-    let attIds = source.resolvedAttachments.map(\.attachment.id).joined(separator: "|")
-    let lines = [
-      source.room.id,
-      ids,
-      attIds,
-      source.attachmentFailures.map(\.attachmentId).joined(separator: "|"),
-    ]
-    let data = Data(lines.joined(separator: "\u{1E}").utf8)
-    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-  }
-
-  private func safeFailure(prefix: String, stderr: Data) -> String {
-    let text = String(decoding: stderr, as: UTF8.self)
-      .split(separator: "\n")
-      .suffix(3)
-      .joined(separator: " ")
-    return text.isEmpty ? "\(prefix) 실행에 실패했습니다." : "\(prefix) 실행 실패: \(text.prefix(500))"
   }
 }

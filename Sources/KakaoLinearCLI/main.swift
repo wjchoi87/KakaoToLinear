@@ -386,6 +386,12 @@ struct KakaoLinearCommand {
     }
   }
 
+  /*
+   변경 전 정책 - `ai use`는 provider/model/baseURL만 바꾸고 ai.commandPath는 이전 값을 유지했다.
+   변경 후 정책 - `ai use`로 다른 provider로 바꾸면 ai.commandPath를 비운다.
+   변경 이유 - Codex·Claude가 같은 ai.commandPath를 쓰므로, 이전 CLI path가 새 provider 실행 파일로 쓰이는 것을 막는다.
+   영향 범위 - `kakao-linear ai use --provider <다른 provider>`. 같은 provider를 다시 고르면 기존과 동일하다.
+   */
   private static func runAI(arguments: [String]) async throws {
     guard let action = arguments.first else {
       throw KakaoLinearError.invalidInput("사용법: kakao-linear ai <providers|models|use|health>")
@@ -418,6 +424,7 @@ struct KakaoLinearCommand {
     case "use":
       let provider = try providerKind(try options.required("--provider"))
       var config = try await runtime.configuration.load()
+      if provider != config.ai.provider { config.ai.commandPath = nil }
       config.ai.provider = provider
       config.ai.model = options.value("--model") ?? provider.suggestedModel
       if !provider.suggestedBaseURL.isEmpty { config.ai.baseURL = provider.suggestedBaseURL }
@@ -444,9 +451,10 @@ struct KakaoLinearCommand {
       print("Keychain에 저장했습니다.")
     case "ai":
       let config = try await runtime.configuration.load()
-      if config.ai.provider == .codexSubscription {
-        print("Codex subscription credential은 KakaoLinear가 저장하지 않습니다.")
-        print("설정 명령: codex login")
+      if config.ai.provider.usesCLICredential {
+        let owner = config.ai.provider.credentialOwner
+        print("\(owner)가 subscription credential을 소유하므로 KakaoLinear는 저장하지 않습니다.")
+        print("설정 명령: \(config.ai.provider.setupHint)")
         return
       }
       guard let pointer = getpass("\(config.ai.provider.displayName) key (없으면 '-' 입력): ") else {

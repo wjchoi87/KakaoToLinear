@@ -17,12 +17,19 @@ public struct KakaoLinearRuntime: Sendable {
     secrets = KeychainSecretStore()
   }
 
+  /*
+   변경 전 정책 - provider override 시 model/baseURL/visionModel만 바꾸고 저장된 ai.commandPath는 그대로 썼다.
+   변경 후 정책 - override provider가 저장된 provider와 다르면 이번 호출에서 ai.commandPath를 쓰지 않는다.
+   변경 이유 - CLI provider가 Codex·Claude 두 개가 되어, 한쪽 CLI path override가 다른 CLI 실행 파일로 쓰일 수 있다.
+   영향 범위 - `--provider`로 저장된 것과 다른 provider를 지정한 1회성 호출. 같은 provider면 기존과 동일하다.
+   */
   /// provider/model을 지정하면 저장된 설정은 건드리지 않고 이번 호출에만 덮어쓴다.
   public func aiProvider(
     provider override: AIProviderKind? = nil, model: String? = nil
   ) async throws -> any AIProvider {
     var config = try await configuration.load()
     if let override {
+      if override != config.ai.provider { config.ai.commandPath = nil }
       config.ai.provider = override
       config.ai.model = model ?? override.suggestedModel
       if !override.suggestedBaseURL.isEmpty { config.ai.baseURL = override.suggestedBaseURL }
@@ -34,6 +41,8 @@ public struct KakaoLinearRuntime: Sendable {
     switch config.ai.provider {
     case .codexSubscription:
       return CodexCLIProvider(commandPath: config.ai.commandPath, model: config.ai.model)
+    case .claudeSubscription:
+      return ClaudeCLIProvider(commandPath: config.ai.commandPath, model: config.ai.model)
     case .alibabaTokenPlan:
       guard let key = try secrets.get(.alibabaTokenPlanAPIKey), !key.isEmpty else {
         throw KakaoLinearError.permission(
@@ -63,7 +72,7 @@ public struct KakaoLinearRuntime: Sendable {
 
   public func aiSecret(for provider: AIProviderKind) throws -> String? {
     switch provider {
-    case .codexSubscription: nil
+    case .codexSubscription, .claudeSubscription: nil
     case .alibabaTokenPlan: try secrets.get(.alibabaTokenPlanAPIKey)
     case .openCodeFree: try secrets.get(.openCodeAPIKey)
     case .liteLLM: try secrets.get(.liteLLMAPIKey)
@@ -76,6 +85,8 @@ public struct KakaoLinearRuntime: Sendable {
     switch provider {
     case .codexSubscription:
       throw KakaoLinearError.invalidInput("Codex subscription credential은 Codex CLI가 소유합니다.")
+    case .claudeSubscription:
+      throw KakaoLinearError.invalidInput("Claude subscription credential은 Claude Code CLI가 소유합니다.")
     case .alibabaTokenPlan: kind = .alibabaTokenPlanAPIKey
     case .openCodeFree: kind = .openCodeAPIKey
     case .liteLLM: kind = .liteLLMAPIKey

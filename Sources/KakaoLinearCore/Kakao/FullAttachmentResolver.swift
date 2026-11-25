@@ -4,7 +4,21 @@ import Foundation
 struct FullAttachmentResolver: Sendable {
   private static let maxFetchBytes: Int64 = 512 * 1024 * 1024
   let container: URL
+  private let session: URLSession
 
+  init(container: URL, session: URLSession = .shared) {
+    self.container = container
+    self.session = session
+  }
+
+  /*
+   변경 전 정책 - CDN fallback은 카톡 메타데이터에 checksum(cs/csl)이 있을 때만 받고, 없으면 종류와 무관하게 저장하지 않았다.
+   변경 후 정책 - checksum이 없어도 image 첨부는 CDN에서 받는다. 대신 응답이 image 계열 Content-Type이거나 이미지 시그니처(jpg/png/gif/webp)일 때만
+     저장한다. checksum이 있으면 기존처럼 SHA-1을 검증한다. file·video는 checksum이 없으면 기존처럼 저장하지 않는다.
+     시그니처로 형식을 모르는 이미지는 응답 Content-Type subtype을 확장자로 쓴다.
+   변경 이유 - 로컬 원본 캐시가 없는 이미지가 checksum 없음으로 계속 로드 실패했다(대장님 결정, 2026-11-25).
+   영향 범위 - 로컬 full cache가 없어 CDN으로 가는 image/album frame. 미리보기·AI context·Linear 첨부에 그대로 쓰인다.
+   */
   /*
    변경 전 정책 - attachment resolver가 존재하지 않아 full/thumbnail/CDN 구분 없이 파일 확보가 불가능했다.
    변경 후 정책 - local full cache를 먼저 검증하고, 없으면 checksum이 있는 full CDN만 사용하며 thumbnail은 절대 결과로 반환하지 않는다.
@@ -52,7 +66,8 @@ struct FullAttachmentResolver: Sendable {
     guard let remoteURL = attachment.remoteURL else {
       throw failure("주소 없음")
     }
-    guard attachment.hash?.isEmpty == false else {
+    let expectedHash = attachment.hash?.isEmpty == false ? attachment.hash : nil
+    guard expectedHash != nil || attachment.kind == .image else {
       throw failure("checksum 없음(저장하지 않음)")
     }
     if let byteSize = attachment.byteSize, byteSize > Self.maxFetchBytes {
@@ -65,7 +80,7 @@ struct FullAttachmentResolver: Sendable {
     let bytes: Data
     let response: URLResponse
     do {
-      (bytes, response) = try await URLSession.shared.data(for: request)
+      (bytes, response) = try await session.data(for: request)
     } catch {
       // 썸네일이 화면에서 사라져 task가 취소된 경우는 실패로 취급하지 않는다.
       if Task.isCancelled { throw CancellationError() }
@@ -81,16 +96,22 @@ struct FullAttachmentResolver: Sendable {
       throw failure("다운로드가 512MB 제한 초과")
     }
     let sha1 = sha1Hex(bytes)
-    do {
-      try validate(hash: sha1, expected: attachment.hash)
-    } catch {
-      throw failure("checksum 불일치")
+    let contentType = http.value(forHTTPHeaderField: "Content-Type")
+    if expectedHash != nil {
+      do {
+        try validate(hash: sha1, expected: expectedHash)
+      } catch {
+        throw failure("checksum 불일치")
+      }
+    } else if !isImagePayload(bytes, contentType: contentType) {
+      throw failure("checksum 없음 · 이미지 형식 아님")
     }
     let output = try outputURL(
       directory: outputDirectory,
       attachment: attachment,
       bytes: bytes,
-      fallbackStem: "\(logId)-\(frameIndex)"
+      fallbackStem: "\(logId)-\(frameIndex)",
+      contentType: contentType
     )
     try bytes.write(to: output, options: .atomic)
     return ResolvedAttachment(attachment: attachment, fileURL: output, tier: .cdn, sha1: sha1)
@@ -208,13 +229,40 @@ struct FullAttachmentResolver: Sendable {
     }
   }
 
+  /// checksum이 없을 때의 최소 검증. 만료 안내 HTML 같은 비이미지 응답을 이미지로 저장하지 않는다.
+  private func isImagePayload(_ bytes: Data, contentType: String?) -> Bool {
+    guard !bytes.isEmpty else { return false }
+    if ["jpg", "png", "gif", "webp"].contains(sniffExtension(bytes, kind: .image)) { return true }
+    return imageSubtype(contentType) != nil
+  }
+
+  /// `image/heic; ...` → `heic`. svg처럼 영숫자가 아닌 subtype은 쓰지 않는다.
+  private func imageSubtype(_ contentType: String?) -> String? {
+    guard
+      let mime = contentType?.split(separator: ";").first?
+        .trimmingCharacters(in: .whitespaces).lowercased(),
+      mime.hasPrefix("image/")
+    else { return nil }
+    let subtype = mime.dropFirst("image/".count)
+    guard (1...8).contains(subtype.count),
+      subtype.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) && $0.isASCII })
+    else { return nil }
+    return String(subtype)
+  }
+
   private func outputURL(
     directory: URL,
     attachment: KakaoAttachment,
     bytes: Data,
-    fallbackStem: String
+    fallbackStem: String,
+    contentType: String? = nil
   ) throws -> URL {
-    let fallbackExtension = sniffExtension(bytes, kind: attachment.kind)
+    var fallbackExtension = sniffExtension(bytes, kind: attachment.kind)
+    if fallbackExtension == "bin", attachment.kind == .image,
+      let subtype = imageSubtype(contentType)
+    {
+      fallbackExtension = subtype
+    }
     let proposed = attachment.originalName ?? "\(fallbackStem).\(fallbackExtension)"
     let safeName = sanitize(filename: proposed)
     let base = URL(fileURLWithPath: safeName).deletingPathExtension().lastPathComponent

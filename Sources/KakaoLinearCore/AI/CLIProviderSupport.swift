@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct CLIDraftPayload: Codable, Sendable {
@@ -423,5 +424,28 @@ struct CLIProviderSupport: Sendable {
 
   func cleanup(_ workspace: URL) {
     try? FileManager.default.removeItem(at: workspace)
+  }
+
+  /// evidence cache 비교용 hash. room, 선택 message, resolve된/실패한 attachment가 같으면 같은 값이다.
+  func sourceHash(_ source: SourceBundle) -> String {
+    let ids = source.messages.map(\.id).joined(separator: "|")
+    let attIds = source.resolvedAttachments.map(\.attachment.id).joined(separator: "|")
+    let lines = [
+      source.room.id,
+      ids,
+      attIds,
+      source.attachmentFailures.map(\.attachmentId).joined(separator: "|"),
+    ]
+    let data = Data(lines.joined(separator: "\u{1E}").utf8)
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// CLI stderr는 마지막 3줄, 최대 500자만 사용자에게 보여준다.
+  func safeFailure(prefix: String, stderr: Data) -> String {
+    let text = String(decoding: stderr, as: UTF8.self)
+      .split(separator: "\n")
+      .suffix(3)
+      .joined(separator: " ")
+    return text.isEmpty ? "\(prefix) 실행에 실패했습니다." : "\(prefix) 실행 실패: \(text.prefix(500))"
   }
 }

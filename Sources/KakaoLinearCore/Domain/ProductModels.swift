@@ -216,6 +216,7 @@ public struct EvidenceAnalysis: Codable, Equatable, Sendable {
 
 public enum AIProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
   case codexSubscription = "codex-subscription"
+  case claudeSubscription = "claude-subscription"
   case alibabaTokenPlan = "alibaba-token-plan"
   case openCodeFree = "opencode-free"
   case liteLLM = "litellm"
@@ -226,6 +227,7 @@ public enum AIProviderKind: String, Codable, CaseIterable, Identifiable, Sendabl
   public var displayName: String {
     switch self {
     case .codexSubscription: "GPT · ChatGPT/Codex Plan"
+    case .claudeSubscription: "Claude · Claude Pro/Max Plan"
     case .alibabaTokenPlan: "Alibaba Token Plan"
     case .openCodeFree: "OpenCode Free"
     case .liteLLM: "LiteLLM"
@@ -235,7 +237,7 @@ public enum AIProviderKind: String, Codable, CaseIterable, Identifiable, Sendabl
 
   public var suggestedModel: String {
     switch self {
-    case .codexSubscription: ""
+    case .codexSubscription, .claudeSubscription: ""
     case .alibabaTokenPlan: "qwen3.6-flash"
     case .openCodeFree: "zen/big-pickle"
     case .liteLLM: ""
@@ -246,14 +248,31 @@ public enum AIProviderKind: String, Codable, CaseIterable, Identifiable, Sendabl
   public var setupHint: String {
     switch self {
     case .codexSubscription: "codex login"
+    case .claudeSubscription: "claude auth login"
     case .alibabaTokenPlan, .openCodeFree, .liteLLM: "kakao-linear auth ai"
     case .openAICompatible: "kakao-linear auth ai"
     }
   }
 
+  /// 구독 로그인(token/OAuth)을 외부 CLI가 소유하는 provider. KakaoToLinear Keychain에 key를 두지 않는다.
+  public var usesCLICredential: Bool {
+    switch self {
+    case .codexSubscription, .claudeSubscription: true
+    case .alibabaTokenPlan, .openCodeFree, .liteLLM, .openAICompatible: false
+    }
+  }
+
+  public var credentialOwner: String {
+    switch self {
+    case .codexSubscription: "Codex CLI"
+    case .claudeSubscription: "Claude Code CLI"
+    case .alibabaTokenPlan, .openCodeFree, .liteLLM, .openAICompatible: "macOS Keychain"
+    }
+  }
+
   public var suggestedBaseURL: String {
     switch self {
-    case .codexSubscription: ""
+    case .codexSubscription, .claudeSubscription: ""
     case .alibabaTokenPlan:
       "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
     case .openCodeFree: "https://opencode.ai/zen/v1"

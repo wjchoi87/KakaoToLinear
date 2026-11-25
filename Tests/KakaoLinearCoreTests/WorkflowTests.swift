@@ -262,6 +262,112 @@ struct WorkflowTests {
     #expect(draft.sourceMessageIds == ["msg_101"])
   }
 
+  @Test("Claude subscription provider는 claude -p stream-json result의 structured output을 사용한다")
+  func claudeCLIProvider() async throws {
+    let script = try makeExecutable(
+      """
+      #!/bin/zsh
+      if [[ "$1" == "auth" ]]; then print -n '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0; fi
+      args=" $* "
+      for required in -p --safe-mode --no-session-persistence --strict-mcp-config --json-schema; do
+        [[ "$args" == *" $required "* ]] || { print -u2 "missing $required"; exit 3; }
+      done
+      [[ "$args" == *" --bare "* ]] && { print -u2 "bare ignores subscription login"; exit 4; }
+      input=$(cat)
+      [[ "$input" == *'"type":"user"'* ]] || { print -u2 "stream-json input missing"; exit 5; }
+      print '{"type":"system","subtype":"init"}'
+      print '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"title":"Claude draft","summary":"plan","requirements":["one"],"acceptanceCriteria":["done"],"notes":[],"questions":[],"sourceMessageIds":["msg_101"]}}'
+      """
+    )
+    let provider = ClaudeCLIProvider(commandPath: script.path, model: "sonnet")
+    #expect(await provider.healthCheck())
+    let draft = try await provider.composeIssue(
+      source: sampleSource(), evidence: sampleEvidence(), agentsInstructions: nil)
+    #expect(draft.title == "Claude draft")
+    #expect(draft.sourceMessageIds == ["msg_101"])
+    let models = try await AIProviderCatalog().models(
+      provider: .claudeSubscription, baseURL: "", apiKey: nil)
+    #expect(models.map(\.id) == ["", "opus", "sonnet"])
+    #expect(AIProviderKind.claudeSubscription.usesCLICredential)
+  }
+
+  @Test("Claude CLI 로그아웃과 is_error result는 실패로 드러낸다")
+  func claudeCLIProviderFailure() async throws {
+    let script = try makeExecutable(
+      """
+      #!/bin/zsh
+      if [[ "$1" == "auth" ]]; then print -n '{"loggedIn":false}'; exit 1; fi
+      cat >/dev/null
+      print '{"type":"result","subtype":"success","is_error":true,"result":"fixture login required"}'
+      exit 1
+      """
+    )
+    let provider = ClaudeCLIProvider(commandPath: script.path, model: "")
+    #expect(await provider.healthCheck() == false)
+    do {
+      _ = try await provider.composeIssue(
+        source: sampleSource(), evidence: sampleEvidence(), agentsInstructions: nil)
+      Issue.record("is_error result가 성공으로 처리됐다")
+    } catch let error as KakaoLinearError {
+      #expect(error.code == "ai_provider")
+      #expect(error.errorDescription?.contains("fixture login required") == true)
+    }
+  }
+
+  @Test("checksum 없는 이미지는 CDN에서 받고, 비이미지 응답과 checksum 없는 파일은 거부한다")
+  func cdnImageWithoutChecksum() async throws {
+    let root = temporaryRoot()
+    // 컨테이너가 없으므로 로컬 원본 캐시를 건너뛰고 CDN 경로로 간다.
+    let resolver = FullAttachmentResolver(
+      container: root.appending(path: "missing-container", directoryHint: .isDirectory),
+      session: mockSession())
+    let output = root.appending(path: "output", directoryHint: .isDirectory)
+    func attachment(_ kind: AttachmentKind) -> KakaoAttachment {
+      KakaoAttachment(
+        id: "att_7_0", messageId: "msg_7", kind: kind,
+        remoteURL: URL(string: "https://cdn.example.test/full"), hash: nil, fullAvailable: true)
+    }
+    func resolve(_ kind: AttachmentKind) async throws -> ResolvedAttachment {
+      try await resolver.resolve(
+        attachment: attachment(kind), chatId: 42, logId: 7, messageType: 2, frameIndex: 0,
+        outputDirectory: output)
+    }
+    func failureMessage(_ kind: AttachmentKind) async -> String? {
+      do {
+        _ = try await resolve(kind)
+        return nil
+      } catch {
+        return error.localizedDescription
+      }
+    }
+
+    let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0xFF, 0xD9])
+    MockURLProtocol.handler = { request in (try http(url: request.url, status: 200), jpeg) }
+    let resolved = try await resolve(.image)
+    #expect(resolved.tier == .cdn)
+    #expect(resolved.fileURL.pathExtension == "jpg")
+    #expect(try Data(contentsOf: resolved.fileURL) == jpeg)
+
+    MockURLProtocol.handler = { request in
+      let url = try #require(request.url)
+      let response = try #require(
+        HTTPURLResponse(
+          url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+          headerFields: ["Content-Type": "image/heic"]))
+      return (response, Data("....ftypheic".utf8))
+    }
+    #expect(try await resolve(.image).fileURL.pathExtension == "heic")
+
+    MockURLProtocol.handler = { request in
+      (try http(url: request.url, status: 200), Data("<html>expired</html>".utf8))
+    }
+    #expect(await failureMessage(.image)?.contains("CDN: checksum 없음 · 이미지 형식 아님") == true)
+
+    // 파일은 checksum 없이 받지 않는다. 요청이 나가면 handler가 실패시켜 메시지가 달라진다.
+    MockURLProtocol.handler = { _ in throw KakaoLinearError.internalFailure("unexpected request") }
+    #expect(await failureMessage(.file)?.contains("CDN: checksum 없음(저장하지 않음)") == true)
+  }
+
   @Test("OpenCode catalog는 UNKNOWN과 paid model을 fail-closed로 제외한다")
   func openCodeFreeCatalog() async throws {
     MockURLProtocol.handler = { request in

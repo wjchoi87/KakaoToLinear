@@ -36,18 +36,19 @@ kakao-linear --version
 - text, image, album, video, generic file relationship
 - 선택된 attachment만 resolve
 - local Pkv2 full cache AES decrypt + SHA-1 검증
-- checksum이 있는 full CDN fallback
+- full CDN fallback: checksum이 있으면 SHA-1 검증, checksum 없는 image는 응답이 이미지일 때만 저장
 - thumbnail을 Linear attachment로 사용하지 않음
 - filename path traversal, bidi override, duplicate 방어
 
 ### AI
 
 - `codex-subscription`: Codex CLI의 기존 ChatGPT/Codex plan 로그인 사용, API key 불필요
+- `claude-subscription`: Claude Code CLI(`claude -p`)의 기존 로그인 사용. Claude Pro/Max 구독 로그인으로 동작하며 API key 불필요
 - `alibaba-token-plan`: xal-plugins의 endpoint/model 규약을 참고한 native provider
 - `opencode-free`: xal-plugins와 같은 fail-closed FREE catalog 판정을 직접 구현
 - `litellm`: configured proxy를 직접 호출하며 key는 optional
 - `openai-compatible`: 기존 `/chat/completions` API fallback
-- Codex token·OAuth 파일을 직접 읽거나 복사하지 않음
+- Codex·Claude token·OAuth 파일을 직접 읽거나 복사하지 않음
 - image는 원본을 바꾸지 않고 long edge 2048px JPEG context로 최적화
 - TXT/MD/CSV/JSON text context
 - PDF/Office/HWP/video는 Linear attachment only
@@ -382,11 +383,22 @@ kakao-linear ai use --provider codex-subscription
 codex login
 ```
 
+Claude Pro/Max 구독으로 쓰려면 Claude Code CLI에 로그인한 뒤 provider를 바꾼다. `--model`은 비우면 CLI 기본 모델, `opus`·`sonnet` 같은 alias도 받는다.
+
+```bash
+claude auth login
+kakao-linear ai use --provider claude-subscription
+kakao-linear ai health
+```
+
+Claude Code 인증 우선순위상 `claude -p`는 `ANTHROPIC_AUTH_TOKEN`·`ANTHROPIC_API_KEY` 환경변수가 있으면 구독 로그인보다 그 값을 먼저 쓴다. 구독으로만 쓰려면 이 변수가 없는 환경에서 실행하고 `claude auth status`의 `authMethod`가 `claude.ai`인지 확인한다.
+
 지원 provider:
 
 | Provider | 선택 명령 | Credential owner | Image context |
 | --- | --- | --- | --- |
 | GPT ChatGPT/Codex Plan | `ai use --provider codex-subscription` | Codex CLI | 지원 |
+| Claude Pro/Max Plan | `ai use --provider claude-subscription` | Claude Code CLI | 지원 |
 | Alibaba Token Plan | `ai use --provider alibaba-token-plan --model qwen3.6-flash` | KakaoToLinear Keychain | 지원 |
 | OpenCode Free | `ai use --provider opencode-free --model zen/big-pickle` | KakaoToLinear Keychain | text-only |
 | LiteLLM | `ai use --provider litellm --model <id>` | KakaoToLinear Keychain, optional | 설정에 따름 |
@@ -453,11 +465,12 @@ Linear personal API key는 Keychain에만 저장한다.
 - 기본 log에 room title, sender, message body, filename을 남기지 않는다.
 - source/draft/local attachment는 local disk에만 저장한다.
 - AI provider에는 선택된 source와 허용된 attachment context만 전송한다.
-- attachment CDN body는 checksum 검증 전 저장하지 않는다.
+- attachment CDN body는 checksum이 있으면 검증한 뒤에만 저장한다. checksum이 없는 image는 응답이 image/* 또는 이미지 시그니처일 때만 저장하고, checksum 없는 file·video는 저장하지 않는다.
 - API key는 config/file/log가 아닌 macOS Keychain에 저장한다.
-- Codex credential은 Codex CLI가 소유하며 KakaoToLinear는 process invocation만 수행한다.
+- Codex·Claude credential은 각 CLI가 소유하며 KakaoToLinear는 process invocation만 수행한다.
 - Alibaba/OpenCode/LiteLLM credential은 provider별로 분리된 macOS Keychain item에 저장한다.
 - Codex provider는 `--ephemeral`, empty temporary workspace, read-only sandbox, output schema로 실행한다.
+- Claude provider는 `--safe-mode`(CLAUDE.md·hooks·plugins·MCP 비활성), `--tools ""`, `--strict-mcp-config`, `--no-session-persistence`, empty temporary workspace, `--json-schema`로 실행한다. 구독 로그인을 무시하는 `--bare`는 쓰지 않는다.
 
 ## Exit codes
 
@@ -483,7 +496,7 @@ swift test
 codesign --verify --deep --strict dist/KakaoToLinear.app
 ```
 
-AI provider regression에는 실제 synthetic fixture 기반 Codex plan compose, mock HTTP 기반 Alibaba/LiteLLM-compatible transport, OpenCode Free catalog/endpoint test가 포함된다. Alibaba/OpenCode live 호출은 KakaoToLinear Keychain에 provider key를 입력한 뒤 실행한다.
+AI provider regression에는 실제 synthetic fixture 기반 Codex plan compose, fake `claude` 기반 Claude stream-json compose·실패 처리, mock HTTP 기반 Alibaba/LiteLLM-compatible transport, OpenCode Free catalog/endpoint test가 포함된다. Alibaba/OpenCode live 호출은 KakaoToLinear Keychain에 provider key를 입력한 뒤 실행한다.
 
 fixture CLI:
 
