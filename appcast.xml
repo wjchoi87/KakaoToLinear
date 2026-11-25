@@ -3,12 +3,12 @@
   <channel>
     <title>KakaoToLinear Updates</title>
     <item>
-      <title>KakaoToLinear 0.4.0</title>
-      <sparkle:version>3</sparkle:version>
-      <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
-      <enclosure url="https://github.com/wjchoi87/KakaoToLinear/releases/download/v0.4.0/KakaoToLinear-0.4.0.zip"
-                 sparkle:edSignature="MYVoCLKHBqqS6aGi+o+SccZaZPUQV5DUdcMMnm0rH0CATd+rXpvdW0tRrbR5qJ6HJbdGpLe+oifIOucLQz68BA=="
-                 length="5369996"
+      <title>KakaoToLinear 0.5.0</title>
+      <sparkle:version>4</sparkle:version>
+      <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+      <enclosure url="https://github.com/wjchoi87/KakaoToLinear/releases/download/v0.5.0/KakaoToLinear-0.5.0.zip"
+                 sparkle:edSignature="FlOVN0SNwxKGVUTZZU9nUe8xAlF9mQ3FcvuPLj3YygPcX5NFM285zTOEy4FJGgcA0vVvFCrhqfukG5apIa0iAw=="
+                 length="5397914"
                  type="application/octet-stream"/>
     </item>
   </channel>

@@ -58,7 +58,7 @@ struct KakaoLinearCommand {
     case "auth": try await runAuth(arguments: rest)
     case "issue": try await runIssue(arguments: rest)
     case "help", "--help", "-h": printHelp()
-    case "version", "--version": print("kakao-linear 0.4.0")
+    case "version", "--version": print("kakao-linear 0.5.0")
     default: throw KakaoLinearError.invalidInput("알 수 없는 command입니다: \(command)")
     }
   }
