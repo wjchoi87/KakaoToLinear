@@ -13,6 +13,17 @@ KakaoTalk 업무 요청을 사용자가 직접 선택하고, AI가 구조화한 
 
 모든 business logic은 `KakaoLinearCore`에 있고 CLI와 SwiftUI app이 같은 Core API를 호출한다.
 
+## 설치
+
+Homebrew로 앱과 `kakao-linear` CLI를 같이 설치한다. 최근 Homebrew는 신뢰한 tap의 cask만 읽으므로 처음 한 번 `brew trust`가 필요하다.
+
+```bash
+brew trust wjchoi87/tap
+brew install --cask wjchoi87/tap/kakaotolinear
+```
+
+또는 [최신 릴리스](https://github.com/wjchoi87/KakaoToLinear/releases/latest)에서 `KakaoToLinear-<버전>.dmg`(또는 `.zip`)를 받아 `/Applications`에 넣는다. 0.4.0 이후 배포본은 Developer ID 서명 + 공증본이다. Apple Silicon, macOS 14 이상. 설치 뒤에는 앱이 Sparkle로 스스로 업데이트한다.
+
 ## CLI 설치 (확장·스크립트용)
 
 `kakao-linear` CLI는 앱 번들 안(`/Applications/KakaoToLinear.app/Contents/MacOS/kakao-linear`)에 들어 있고, 단독 배포본도 릴리스에 있다.
@@ -238,6 +249,12 @@ APP_DEVELOPER_ID="Developer ID Application: 이름 (TEAMID)" \
 APPLE_ID="you@example.com" APPLE_TEAM_ID="TEAMID" APPLE_PASSWORD="app-specific" \
 SPARKLE_BIN=/tmp/bin ./scripts/release.sh 0.3.0
 
+# notarytool keychain profile을 쓰면 (APPLE_* 대신):
+APP_DEVELOPER_ID="Developer ID Application: 이름 (TEAMID)" NOTARY_PROFILE=<profile> \
+SPARKLE_BIN=/tmp/bin ./scripts/release.sh 0.5.0
+# 공증까지 된 릴리스는 DMG(scripts/make-dmg.sh)도 만들어 같이 올리고,
+# 마지막에 Homebrew tap cask를 새 버전으로 갱신한다(scripts/update-homebrew-cask.sh, DRY_RUN이면 출력만).
+
 # 1) 수동 절차:
 #    1) 버전 올리기: Package.swift/Info.plist의 CPBundleShortVersionString/CFBundleVersion을 올린다.
 #    2) 서명+notarize 된 앱 빌드 (아래 "### 1" 절차)
@@ -309,47 +326,27 @@ codesign --verify --deep --strict dist/KakaoToLinear.app
 spctl -a -vv dist/KakaoToLinear.app
 ```
 
-### 2. Homebrew cask 등록
+### 2. Homebrew cask
 
-이 앱은 설치형 cask가 아니라 **다운로드형 zipped 앱 cask**에 적합하다. 절차:
+개인 tap [`wjchoi87/homebrew-tap`](https://github.com/wjchoi87/homebrew-tap)의 `Casks/kakaotolinear.rb`로 배포한다.
 
-1. **릴리스 asset 준비**: GitHub Releases에 `KakaoToLinear-<버전>.zip`(notarized 된 .app을 묶은 것)을 업로드. URL은 안정적이어야 하며 버전별로 고정.
+- 릴리스 zip(`KakaoToLinear-<버전>.zip`)을 받아 앱을 설치하고, 앱 번들 안 CLI를 `kakao-linear`로 링크한다(`binary`).
+- 앱이 Sparkle로 스스로 업데이트하므로 `auto_updates true`다. `brew upgrade`는 기본적으로 건드리지 않는다.
+- `scripts/update-homebrew-cask.sh <버전>`이 cask 전체를 새 버전·sha256으로 다시 쓰고 `brew style` 통과 시에만 tap에 push한다. `release.sh`가 마지막에 호출한다.
 
-2. **cask 파일 작성**: [homebrew-cask](https://github.com/Homebrew/homebrew-cask)에 PR을 열어 `Casks/k/kakao-linear.rb` 추가.
-
-```ruby
-cask "kakao-linear" do
-  version "0.2.0"
-  sha256 "NEWMD5OFTHEZIP"   # 실제 zip의 sha256
-
-  url "https://github.com/wjchoi87/KakaoToLinear/releases/download/v#{version}/KakaoToLinear-#{version}.zip"
-  name "KakaoToLinear"
-  desc "Local-first KakaoTalk to Linear issue maker"
-  homepage "https://github.com/wjchoi87/KakaoToLinear"
-
-  app "KakaoToLinear.app"
-
-  zap trash: "~/Library/Application Support/KakaoToLinear"
-end
+```bash
+DRY_RUN=1 ./scripts/update-homebrew-cask.sh 0.5.0   # cask 출력·brew style만
+./scripts/update-homebrew-cask.sh 0.5.0             # tap에 commit/push
+brew trust --cask wjchoi87/tap/kakaotolinear && brew audit --cask --online wjchoi87/tap/kakaotolinear
 ```
 
-- `sha256`은 `shasum -a 256 KakaoToLinear-0.2.0.zip`로 계산해 채운다.
-- homebrew-cask CI(`brew cask audit kakao-linear`, `brew style`)를 통과해야 병합된다.
-- 일반적으로 **홈브루에 등록하려면 기여(PR)가 필요**하며, homebrew-core(cask)는 오픈소스 리포에 대한 공개 PR로만 추가된다. 사설 소프트웨어는 `brew tap wjchoi87/tap` 형태의 **개인 tap**을 만드는 게 일반적.
+### 3. DMG
 
-3. **(선택) 개인 tap** (사내/사설 배포):
+`scripts/make-dmg.sh <버전>`이 공증·staple된 `dist/KakaoToLinear.app`으로 `dist/KakaoToLinear-<버전>.dmg`(Applications 바로가기 포함)를 만들고 Developer ID 서명 → 공증 → staple까지 한다. `release.sh`가 공증 릴리스일 때 호출해 릴리스 asset에 포함한다.
+
 ```bash
-# tap 저장소에 Casks/kakao-linear.rb 올리고
-brew tap wjchoi87/tap
-brew install --cask <tap>/kakao-linear
-```
-
-### 3. DMG (선택)
-
-`.dmg`로 배포하면 Finder 드래그 설치가 가능하다:
-```bash
-hdiutil create -volname KakaoToLinear -srcfolder dist/KakaoToLinear.app -ov \
-  -format UDZO dist/KakaoToLinear.dmg
+APP_DEVELOPER_ID="Developer ID Application: 이름 (TEAMID)" NOTARY_PROFILE=<profile> ./scripts/make-dmg.sh 0.5.0
+spctl -a -t open --context context:primary-signature -vv dist/KakaoToLinear-0.5.0.dmg
 ```
 
 ## 최초 설정

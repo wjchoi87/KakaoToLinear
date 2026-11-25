@@ -110,6 +110,16 @@ else
   fi
 fi
 
+# 2b. DMG — 변경 전: 릴리스 asset은 zip만. 변경 후: 앱 공증·staple까지 된 릴리스는
+#     scripts/make-dmg.sh로 서명·공증·staple된 DMG도 만들어 같이 올린다(2026-11-25 v0.5.0부터).
+#     ad-hoc/미공증 릴리스는 기존처럼 zip만 올린다.
+DMG=""
+if [[ "$SIGNED" == true && ${#NOTARY_ARGS[@]} -gt 0 ]]; then
+  echo ">>> DMG"
+  ./scripts/make-dmg.sh "$VERSION"
+  DMG="dist/KakaoToLinear-$VERSION.dmg"
+fi
+
 # --------------------------------------------------------------------------
 # 3. zip 생성 + Sparkle 서명
 # --------------------------------------------------------------------------
@@ -187,19 +197,36 @@ else
   git push origin main
 
   echo ">>> GitHub Release 생성/업데이트"
+  ASSETS=("dist/$ZIP" "dist/$CLI_ZIP" "dist/$CLI_ZIP.sha256")
+  EXTRA_NOTES=""
+  if [[ -n "$DMG" ]]; then
+    ASSETS+=("$DMG")
+    EXTRA_NOTES=$'\n'"- \`KakaoToLinear-$VERSION.dmg\`: 같은 앱의 DMG. 열어서 Applications로 드래그합니다."
+    EXTRA_NOTES+=$'\n'"- Homebrew: \`brew trust wjchoi87/tap && brew install --cask wjchoi87/tap/kakaotolinear\`"
+  fi
   if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-    gh release upload "$TAG" "dist/$ZIP" "dist/$CLI_ZIP" "dist/$CLI_ZIP.sha256" --repo "$REPO" --clobber
+    gh release upload "$TAG" "${ASSETS[@]}" --repo "$REPO" --clobber
   else
-    gh release create "$TAG" "dist/$ZIP" "dist/$CLI_ZIP" "dist/$CLI_ZIP.sha256" --repo "$REPO" \
+    gh release create "$TAG" "${ASSETS[@]}" --repo "$REPO" \
       --title "KakaoToLinear $VERSION" --notes "$(cat <<NOTES
 KakaoToLinear $VERSION
 
-- \`KakaoToLinear-$VERSION.zip\`: macOS 앱 (Developer ID 서명 + 공증). \`kakao-linear\` CLI가 앱 번들 안(\`Contents/MacOS/kakao-linear\`)에도 들어 있습니다.
+- \`KakaoToLinear-$VERSION.zip\`: macOS 앱 (Developer ID 서명 + 공증). \`kakao-linear\` CLI가 앱 번들 안(\`Contents/MacOS/kakao-linear\`)에도 들어 있습니다.${EXTRA_NOTES}
 - \`kakao-linear-macos-arm64.zip\`: CLI 단독 배포본 (\`kakao-linear\` + \`SQLCipher.framework\`, 같은 폴더에 둘 것). sha256은 \`.sha256\` 파일 참고.
 - 최신 CLI 주소: https://github.com/$REPO/releases/latest/download/kakao-linear-macos-arm64.zip
 NOTES
 )"
   fi
+fi
+
+# 6. Homebrew tap cask — 변경 전: tap은 손으로 갱신. 변경 후: 공증 릴리스면 릴리스 zip의 sha256으로
+#    wjchoi87/homebrew-tap의 kakaotolinear cask를 갱신·push한다(DRY_RUN이면 출력만).
+#    미공증(ad-hoc) 릴리스는 brew 설치가 Gatekeeper에 막히므로 cask를 올리지 않는다.
+if [[ -n "$DMG" ]]; then
+  echo ">>> Homebrew cask 갱신"
+  ./scripts/update-homebrew-cask.sh "$VERSION"
+else
+  echo "!!! 공증되지 않은 릴리스라 Homebrew cask는 갱신하지 않습니다." >&2
 fi
 
 echo ""
